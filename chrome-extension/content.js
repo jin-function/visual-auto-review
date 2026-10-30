@@ -1,5 +1,5 @@
 (() => {
-    const version = '1.3.0';
+    const version = chrome.runtime.getManifest().version;
     if (globalThis.__visualQAOverlay?.version === version) return;
     globalThis.__visualQAOverlay?.destroy?.();
     // A reloaded extension loses its old isolated context, but its DOM can remain on the page.
@@ -7,17 +7,19 @@
     let host, canvas, context, bitmap, transfer, meta, settings, selected, frame = 0, devtoolsReady = false;
     let destroyed = false, resizeTimer, generation = 0;
     function device() { return innerWidth < (meta?.breakpoint || 1024) ? 'mo' : 'pc'; }
-    function active() { return !!bitmap && meta?.device === device(); }
+    function active() { return !!bitmap && !!host?.isConnected && meta?.device === device(); }
     function geometry() { return meta && VisualQALayout.geometry(innerWidth, innerHeight, meta, settings, scrollX, scrollY); }
     function status() {
-        return {connected: !!meta, imageVisible: active() && settings.visible, viewportWidth: innerWidth, viewportHeight: innerHeight,
+        return {version, connected: !!meta && !!host?.isConnected, imageVisible: active() && settings.visible, viewportWidth: innerWidth, viewportHeight: innerHeight,
             scrollX, scrollY, settings, devtoolsReady, imageRole: meta?.imageRole, reviewId: active() ? meta.reviewId : null,
             device: device(), missingVariant: !!meta && !bitmap && meta.device === device(), switching: !!transfer || (!!meta && meta.device !== device()), geometry: geometry(),
             url: location.href, widthMismatch: !!meta && innerWidth !== meta.viewportWidth};
     }
     function paint() {
         frame = 0;
-        if (!canvas || !meta) return;
+        if (!canvas || !meta || !host?.isConnected) return;
+        host.setAttribute('data-visualqa-device', device());
+        host.setAttribute('data-visualqa-review-id', active() ? meta.reviewId : '');
         const layout = geometry();
         const ratio = Math.min(devicePixelRatio || 1, 2, 32760 / layout.canvasWidth, 32760 / innerHeight);
         const width = Math.ceil(layout.canvasWidth * ratio), height = Math.ceil(innerHeight * ratio);
@@ -43,6 +45,8 @@
         for (const stale of document.querySelectorAll('visualqa-overlay[data-visualqa-extension="overlay"]')) stale.remove();
         host = document.createElement('visualqa-overlay');
         host.setAttribute('data-visualqa-extension', 'overlay');
+        host.setAttribute('data-visualqa-version', version);
+        host.setAttribute('aria-hidden', 'true');
         host.style.cssText = 'all:initial!important;position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;z-index:2147483646!important;pointer-events:none!important;overflow:hidden!important;contain:strict!important;display:flex!important;justify-content:center!important;align-items:flex-start!important;';
         const shadow = host.attachShadow({mode: 'closed'});
         canvas = document.createElement('canvas');

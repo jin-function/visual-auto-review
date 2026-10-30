@@ -48,11 +48,11 @@ const server = http.createServer((request, response) => {
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const url = `http://127.0.0.1:${server.address().port}/html/page.html`;
-function png() {
+function png(red = 35, green = 100, blue = 230) {
     function chunk(type, bytes) { const name = Buffer.from(type), length = Buffer.alloc(4), crc = Buffer.alloc(4); length.writeUInt32BE(bytes.length); crc.writeUInt32BE(crc32(Buffer.concat([name, bytes]))); return Buffer.concat([length, name, bytes, crc]); }
     const header = Buffer.alloc(13); header.writeUInt32BE(80, 0); header.writeUInt32BE(80, 4); header[8] = 8; header[9] = 6;
     const pixels = Buffer.alloc(80 * (80 * 4 + 1));
-    for (let y = 0; y < 80; y++) for (let x = 0; x < 80; x++) { const offset = y * 321 + 1 + x * 4; pixels.set([35, 100, 230, 255], offset); }
+    for (let y = 0; y < 80; y++) for (let x = 0; x < 80; x++) { const offset = y * 321 + 1 + x * 4; pixels.set([red, green, blue, 255], offset); }
     return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', header), chunk('IDAT', deflateSync(pixels)), chunk('IEND', Buffer.alloc(0))]);
 }
 const original = process.argv.find(argument => argument.startsWith('--original='))?.slice('--original='.length);
@@ -205,6 +205,9 @@ try {
     const settings = await evaluate(panel, `chrome.runtime.sendMessage({type:'status',tabId:chrome.devtools.inspectedWindow.tabId})`);
     assert.equal(settings.value.overlay.widthMismatch, false);
     assert.equal(settings.value.overlay.imageRole, 'reference-original');
+    assert.equal(settings.value.overlay.version, manifest.version);
+    assert.equal(await tool('[data-tool="extension-version"]', 'return this.textContent;'), `시안 검수 · v${manifest.version}`);
+    assert.equal(await evaluate(page, `document.querySelector('visualqa-overlay').getAttribute('data-visualqa-version')`), manifest.version);
     assert.ok(settings.value.overlay.devtoolsReady);
     assert.equal(await tool('[data-tool="options-tab"]', 'return this.getAttribute("aria-selected");'), 'true');
     await tool('[data-tool="findings-tab"]', 'this.click();');
@@ -329,7 +332,7 @@ try {
         await send('Emulation.setDeviceMetricsOverride', {width, height: 600, deviceScaleFactor: 1, mobile: false}, page);
         await pause(150);
     }
-    async function canvasState() {
+    async function canvasState(sampleX, sampleY) {
         const tree = await send('DOM.getDocument', {depth: -1, pierce: true}, page);
         function find(node) {
             if (node.nodeName === 'VISUALQA-OVERLAY') return node;
@@ -339,14 +342,19 @@ try {
         const found = await send('DOM.querySelector', {nodeId: host.shadowRoots[0].nodeId, selector: 'canvas'}, page);
         const object = await send('DOM.resolveNode', {nodeId: found.nodeId}, page);
         const result = await send('Runtime.callFunctionOn', {objectId: object.object.objectId,
-            functionDeclaration: `function(){const rect=this.getBoundingClientRect(), style=getComputedStyle(this);return {width:rect.width,left:rect.left,top:rect.top,minWidth:style.minWidth,flexShrink:style.flexShrink,alpha:this.getContext('2d').getImageData(Math.floor(this.width/2),10,1,1).data[3]};}`, returnByValue: true}, page);
+            functionDeclaration: `function(x,y){const rect=this.getBoundingClientRect(), style=getComputedStyle(this);const pixel=[...this.getContext('2d').getImageData(Math.floor((x??rect.width/2)*this.width/rect.width),Math.floor((y??10)*this.height/rect.height),1,1).data];return {width:rect.width,left:rect.left,top:rect.top,minWidth:style.minWidth,flexShrink:style.flexShrink,alpha:pixel[3],pixel};}`, arguments:[{value:sampleX??null},{value:sampleY??null}], returnByValue: true}, page);
         return result.result.value;
+    }
+    async function bitmapMatches(channel, minimum, other, maximum) {
+        const layout = (await state()).overlay.geometry;
+        const pixel = (await canvasState(layout.x + layout.imageWidth / 2, Math.max(0, layout.y) + 10)).pixel;
+        return pixel[channel] > minimum && pixel[other] < maximum && pixel[3] > 0;
     }
     await resize(1200);
     await until(async () => (await state()).binding.device === 'pc' && (await state()).overlay.missingVariant, 'missing PC hides MO overlay');
     await until(() => tool('[data-tool="missing-variant"]', 'return !this.hidden;'), 'missing variant notice');
     assert.equal((await canvasState()).alpha, 0);
-    const pcImage = png();
+    const pcImage = png(230, 55, 75);
     const pcReview = {...review, name: 'PC 시안', targetId: 'pc', device: 'pc', viewportWidth: 1920, placement: {x: 0, y: 0},
         display: {width: 1920, height: 1920}, revisionId: 'pc-revision',
         image: {mime: 'image/png', width: 80, height: 80, sha256: createHash('sha256').update(pcImage).digest('hex'), base64: pcImage.toString('base64')},
@@ -358,9 +366,12 @@ try {
     await until(async () => (await state()).overlay.reviewId && (await state()).binding.device === 'pc' && !(await state()).overlay.missingVariant, 'PC auto pairing');
     await until(() => tool('[data-tool="variant-mo"]', 'return !!this.value;'), 'MO paired in options');
     assert.equal((await state()).overlay.geometry.imageWidth, 1920);
+    await until(() => bitmapMatches(0, 200, 2, 100), 'PC bitmap pixels painted');
     const pcCanvas = await canvasState();
     assert.deepEqual({width:pcCanvas.width,left:pcCanvas.left,minWidth:pcCanvas.minWidth,flexShrink:pcCanvas.flexShrink}, {width:1920,left:-360,minWidth:'1920px',flexShrink:'0'});
     assert.ok(pcCanvas.alpha > 0, 'PC image pixels are painted');
+    assert.ok(pcCanvas.pixel[0] > 200 && pcCanvas.pixel[2] < 100, 'PC bitmap must be red, not the mobile bitmap');
+    assert.equal(await evaluate(page, `document.querySelector('visualqa-overlay').getAttribute('data-visualqa-device')`), 'pc');
     fs.writeFileSync(path.join(root, 'verification/pc-centered-1200.png'), Buffer.from((await send('Page.captureScreenshot', {format:'png'}, page)).data, 'base64'));
     fs.writeFileSync(path.join(root, 'verification/pc-panel.png'), Buffer.from((await send('Page.captureScreenshot', {format:'png'}, side)).data, 'base64'));
     assert.deepEqual(await evaluate(page, `(()=>{const s=getComputedStyle(document.querySelector('visualqa-overlay'));return [s.display,s.justifyContent,s.alignItems];})()`), ['flex','center','flex-start']);
@@ -369,10 +380,16 @@ try {
     await resize(1023);
     await until(async () => (await state()).binding.device === 'mo' && (await state()).overlay.reviewId && !(await state()).overlay.missingVariant, '1023 selects only MO');
     assert.equal((await state()).overlay.settings.dx, 0);
+    if (!original) {
+        await until(() => bitmapMatches(2, 200, 0, 100), 'MO bitmap returns to blue');
+    }
     await until(() => tool('[data-tool="findings"]', 'return this.querySelectorAll("li button").length;').then(count => count === 2), 'MO findings replace PC findings');
     await resize(1024);
     await until(async () => (await state()).binding.device === 'pc' && (await state()).overlay.reviewId, '1024 selects only PC');
     assert.equal((await state()).overlay.settings.dx, 17);
+    await until(() => bitmapMatches(0, 200, 2, 100), 'PC bitmap replaces the mobile bitmap');
+    const restoredPCPixel = (await canvasState()).pixel;
+    assert.ok(restoredPCPixel[0] > 200 && restoredPCPixel[2] < 100, 'PC width must replace MO with the PC bitmap');
     await until(() => tool('[data-tool="findings"]', 'return this.querySelectorAll("li button").length;').then(count => count === 1), 'PC findings replace MO findings');
     await resize(2560);
     await until(async () => (await canvasState()).left === 0 && (await canvasState()).width === 2560, 'wide canvas plane');
@@ -435,7 +452,7 @@ try {
     await send('Emulation.setDeviceMetricsOverride', {width: 1100, height: 1600, deviceScaleFactor: 1, mobile: false}, frontSession);
     const preview = await send('Page.captureScreenshot', {format: 'png', captureBeyondViewport: true}, frontSession);
     fs.writeFileSync(path.join(root, 'verification/chrome-devtools.png'), Buffer.from(preview.data, 'base64'));
-    receipt = {status: 'PASS', extensionVersion: manifest.version, testedFiles, browser: (await send('Browser.getVersion')).product, tests: ['original design import', 'original image overlay', 'native Chrome sidepanel', 'DevTools without sidePanel namespace', 'no page tool panel', 'unchanged page styles and geometry', 'sidepanel file import and connection', 'options and findings tabs', 'keyboard tab navigation', 'finding list rendering', 'finding list navigation', 'previous and next findings', 'sidepanel opacity', 'active tab isolation', 'native sidepanel close and reopen', 'sidepanel export through native DevTools', 'strict image CSP overlay', 'pointer passthrough', 'unchanged layout height', 'finding navigation', 'native Elements selection', 'DOM edits', 'native Styles edits', 'cross-origin CSS edits', 'runtime CSSOM rules', 'form state', 'ZIP export', 'overlay and tools excluded from HTML', 'relative CSS imports and asset URLs', 'original HTML and CSS filenames', 'duplicate filenames separated by folder', 'authored CSS CRLF and indentation', 'authored CSS comments', 'CSS URL whitespace and quote preservation', 'Five Server scripts styles markup removed', 'review scripts styles markup removed', 'adopted tooling stylesheet removed', 'legitimate scripts and inline style preserved', 'hide toggle', 'reload reapplication', 'viewport mismatch', 'stale overlay cleanup', 'missing variant hides wrong design', 'PC and MO automatic pairing', '1023 and 1024 boundary switching', 'fixed minimum canvas width', 'flex centered canvas', 'PC and MO independent adjustments', 'variant findings switch', 'wide and narrow viewport geometry', 'custom breakpoint', 'rapid resize convergence', 'standalone extension workspace', 'open actual page with overlay'],
+    receipt = {status: 'PASS', extensionVersion: manifest.version, testedFiles, browser: (await send('Browser.getVersion')).product, tests: ['original design import', 'original image overlay', 'registered and renderer versions match', 'sidepanel applied version visible', 'PC and MO distinct bitmap pixels', 'native Chrome sidepanel', 'DevTools without sidePanel namespace', 'no page tool panel', 'unchanged page styles and geometry', 'sidepanel file import and connection', 'options and findings tabs', 'keyboard tab navigation', 'finding list rendering', 'finding list navigation', 'previous and next findings', 'sidepanel opacity', 'active tab isolation', 'native sidepanel close and reopen', 'sidepanel export through native DevTools', 'strict image CSP overlay', 'pointer passthrough', 'unchanged layout height', 'finding navigation', 'native Elements selection', 'DOM edits', 'native Styles edits', 'cross-origin CSS edits', 'runtime CSSOM rules', 'form state', 'ZIP export', 'overlay and tools excluded from HTML', 'relative CSS imports and asset URLs', 'original HTML and CSS filenames', 'duplicate filenames separated by folder', 'authored CSS CRLF and indentation', 'authored CSS comments', 'CSS URL whitespace and quote preservation', 'Five Server scripts styles markup removed', 'review scripts styles markup removed', 'adopted tooling stylesheet removed', 'legitimate scripts and inline style preserved', 'hide toggle', 'reload reapplication', 'viewport mismatch', 'stale overlay cleanup', 'missing variant hides wrong design', 'PC and MO automatic pairing', '1023 and 1024 boundary switching', 'fixed minimum canvas width', 'flex centered canvas', 'PC and MO independent adjustments', 'variant findings switch', 'wide and narrow viewport geometry', 'custom breakpoint', 'rapid resize convergence', 'standalone extension workspace', 'open actual page with overlay'],
         cssBenchmark, originalImage: {width: imageWidth, height: imageHeight, display: review.display},
         cssFiles: detail.manifest.stylesheets.length, cssSources: detail.manifest.stylesheets, warnings: detail.manifest.warnings, zip: zipPath};
     fs.writeFileSync(path.join(root, 'verification/chrome-extension.json'), JSON.stringify(receipt, null, 2));

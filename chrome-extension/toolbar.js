@@ -52,7 +52,8 @@
         const sheet = new CSSStyleSheet(); sheet.replaceSync(css); shadow.adoptedStyleSheets = [sheet];
         const panel = node('aside', undefined, shadow, {class: 'panel', 'aria-label': '시안 검수 도구'});
         const header = node('header', undefined, panel);
-        node('strong', '시안 검수', header);
+        const version = chrome.runtime.getManifest().version;
+        node('strong', `시안 검수 · v${version}`, header, {'data-tool': 'extension-version'});
         const manage = node('button', '검수 파일', header, {type: 'button', 'data-tool': 'manage'});
         const body = node('div', undefined, panel, {class: 'body'});
         node('p', `${meta.device.toUpperCase()} · ${meta.name}`, body, {class: 'name'});
@@ -89,7 +90,8 @@
         }
         const resets = node('div', undefined, options, {class: 'row'});
         const reset = node('button', '위치·배율 초기화', resets, {type: 'button', 'data-tool': 'reset'});
-        const viewport = node('p', '', options, {class: 'muted'});
+        const viewport = node('p', '', options, {class: 'muted', 'data-tool': 'viewport'});
+        const rendererVersion = node('p', '', options, {class: 'muted', 'data-tool': 'renderer-version'});
         const mismatch = node('p', '', body, {class: 'muted warning', hidden: ''});
         node('p', `차이 항목 ${meta.findings.length}개`, differences, {class: 'name'});
         const findings = node('ul', undefined, differences, {class: 'finding-list', 'data-tool': 'findings', 'aria-label': '차이 항목 목록'});
@@ -220,7 +222,10 @@
             viewport.textContent = `현재 ${state.device.toUpperCase()} · 화면 ${state.viewportWidth}px · 검수 폭 ${meta.viewportWidth}px · 자동 축소 없음`;
             mismatch.hidden = !state.widthMismatch || state.missingVariant;
             if (state.widthMismatch) mismatch.textContent = `시안은 검수 폭 ${meta.viewportWidth}px를 유지하며 화면 중앙에 표시됩니다. 정확한 비교는 기기 도구 모음에서 같은 폭으로 맞추세요.`;
-            ready = state.devtoolsReady && !state.switching; updateReady();
+            const currentRenderer = state.version === version;
+            rendererVersion.textContent = currentRenderer ? `페이지 오버레이 v${state.version}` : '이전 오버레이가 남아 있습니다. 검수 파일에서 현재 페이지에 다시 연결하세요.';
+            rendererVersion.classList.toggle('warning', !currentRenderer);
+            ready = state.devtoolsReady && !state.switching && currentRenderer; updateReady();
         }
         document.getElementById('tools').append(host); selectFinding();
         return {update, destroy() { destroyed = true; clearTimeout(timer); host.remove(); }};

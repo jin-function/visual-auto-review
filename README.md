@@ -1,9 +1,12 @@
 # Visual Auto Review
 
 시안 이미지와 실제 페이지를 비교하고, Chrome에서 시안 원본을 겹쳐 보며 HTML·CSS를 수정하는 검수 도구입니다.
-검수 앱 소스 v3.4와 Chrome 확장 v1.3.1을 포함합니다.
+검수 앱 소스 v3.4와 Chrome 확장 v1.3.2을 포함합니다.
 
 ## 이번 변경
+
+- 패널과 실제 페이지 오버레이의 적용 버전을 확인할 수 있습니다.
+  PC 화면에서 모바일 시안이 계속 남는 경우 등록한 확장 폴더의 갱신 여부를 확인합니다.
 
 - 저장하는 HTML·CSS는 원본 파일명을 유지합니다.
   동명 CSS는 파일명에 번호를 붙이지 않고 폴더로 구분합니다.
@@ -153,4 +156,4 @@ node tests/extension_integration.mjs
 node tests/extension_integration.mjs --stale-manifest
 ```
 
-검증 범위와 확인이 남은 사항은 [v1.3.1 저장 검증 기록](verification/extension-1.3.1.md)에 정리했습니다.
+검증 범위와 확인이 남은 사항은 [v1.3.2 적용·전환 검증 기록](verification/extension-1.3.2.md)에 정리했습니다.

@@ -16,5 +16,6 @@ verification/*
 !verification/.gitkeep
 !verification/extension-1.3.md
 !verification/extension-1.3.1.md
+!verification/extension-1.3.2.md
 visual-qa-results*/
 ready.json
