@@ -111,3 +111,38 @@ test('overlay keeps review width, centers wide and narrow planes and retains doc
     assert.equal(mo.imageScreenX, -29);
     assert.equal(mo.imageScreenY, -33);
 });
+
+test('export keeps original filenames and isolates duplicate CSS names in folders', async () => {
+    const {originalFilename, stylesheetPaths, relativePath} = await import('../chrome-extension/export-paths.mjs');
+    const paths = stylesheetPaths(['https://a.test/css/style.css?v=2', 'https://b.test/style.css', 'https://a.test/STYLE.css', 'https://a.test/css/%EC%8B%9C%EC%95%88.css']);
+    assert.equal(originalFilename('https://a.test/html/original.htm?q=1', 'index.html'), 'original.htm');
+    assert.equal(paths.get('https://a.test/css/style.css?v=2'), 'css/style.css');
+    assert.equal(paths.get('https://b.test/style.css'), 'css/source-2/style.css');
+    assert.equal(paths.get('https://a.test/STYLE.css'), 'css/source-3/STYLE.css');
+    assert.equal(paths.get('https://a.test/css/%EC%8B%9C%EC%95%88.css'), 'css/시안.css');
+    assert.equal(relativePath('css/source-2/style.css', 'css/import.css'), '../import.css');
+    assert.equal(relativePath('html/original.htm', 'css/style.css'), '../css/style.css');
+});
+test('export URL changes preserve CSS CRLF, tabs, quote style and whitespace inside url()', () => {
+    const css = '/* keep */\r\n@import  \'./other.css\';\r\n.x {\r\n\tbackground: URL(\r\n\t\t"../img/a.png"  \r\n\t);\r\n\tmask: url( #mask );\r\n}\r\n';
+    const output = rebaseCSS(css, 'https://a.test/css/style.css', url => url.endsWith('/other.css') ? 'other.css' : url, true);
+    assert.equal(output, css.replace('./other.css', 'other.css').replace('../img/a.png', 'https://a.test/img/a.png'));
+    assert.equal(rebaseCSS('.x{a:url(../img/a\\)b.png)}', 'https://a.test/css/style.css', undefined, true), '.x{a:url(https://a.test/img/a\\)b.png)}');
+});
+test('CSS source merge preserves authored rules/comments and inserts or deletes runtime rules', async () => {
+    const {cssRuleRanges, mergeStylesheet} = await import('../chrome-extension/css-source.mjs');
+    const normalize = value => value.replace(/\s+/g, '');
+    const css = '/* heading */\r\n.a {\r\n\tcolor: red;\r\n}\r\n\r\n/* tail */\r\n.b { width: 10px; }\r\n';
+    const rules = ['.a {color:red;}', '.b {width:10px;}'];
+    assert.equal(mergeStylesheet(css, rules, normalize), css);
+    const added = mergeStylesheet(css, [...rules, '.runtime { margin: 17px; }'], normalize);
+    assert.ok(added.includes('.a {\r\n\tcolor: red;\r\n}'));
+    assert.ok(added.includes('/* tail */\r\n.b { width: 10px; }'));
+    assert.ok(added.includes('.runtime {\r\n\tmargin: 17px;\r\n}'));
+    const removed = mergeStylesheet(css, rules.slice(1), normalize);
+    assert.ok(!removed.includes('.a {'));
+    assert.ok(removed.includes('/* heading */'));
+    assert.ok(removed.includes('.b { width: 10px; }'));
+    const tricky = '/* { */\n.a[data-v="};"] { content: "}"; --x: {nested: ";"}; background: url(data:x;{}); }\n@media (min-width:1px) {.b{color:red}}';
+    assert.equal(cssRuleRanges(tricky).length, 2);
+});

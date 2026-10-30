@@ -13,7 +13,13 @@ export function decodeCSS(value) {
     });
 }
 function quoteCSS(value) { return '"' + value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/[\n\r\f]/g, '\\a ') + '"'; }
-export function rebaseCSS(text, base, resolve = value => value) {
+function escapeValue(value, quote) {
+    return value.replace(/\\/g, '\\\\').replace(/["'()\s]/g, character => {
+        if (/^[\n\r\f]$/.test(character)) return '\\' + character.charCodeAt(0).toString(16) + ' ';
+        return quote ? (character === quote ? '\\' + character : character) : '\\' + character;
+    });
+}
+export function rebaseCSS(text, base, resolve = value => value, preserveSyntax = false) {
     let result = '', position = 0, importNext = false;
     function address(raw) {
         const value = decodeCSS(raw);
@@ -29,7 +35,10 @@ export function rebaseCSS(text, base, resolve = value => value) {
         const character = text[position];
         if (character === '"' || character === "'") {
             const end = stringAt(text, position);
-            result += importNext ? quoteCSS(address(text.slice(position + 1, end - 1))) : text.slice(position, end);
+            const raw = text.slice(position + 1, end - 1), next = importNext ? address(raw) : decodeCSS(raw);
+            if (!importNext || (preserveSyntax && next === decodeCSS(raw))) result += text.slice(position, end);
+            else if (preserveSyntax) result += character + escapeValue(next, character) + character;
+            else result += quoteCSS(next);
             importNext = false; position = end; continue;
         }
         const tail = text.slice(position);
@@ -38,16 +47,22 @@ export function rebaseCSS(text, base, resolve = value => value) {
         if (match) {
             let start = position + match[0].length;
             while (/\s/.test(text[start] || '') && start < text.length) start++;
-            let end = start, value;
+            let end = start, value, valueStart = start, valueEnd, quote = '';
             if (text[start] === '"' || text[start] === "'") {
-                end = stringAt(text, start); value = text.slice(start + 1, end - 1);
+                quote = text[start]; end = stringAt(text, start); valueStart = start + 1; valueEnd = end - 1; value = text.slice(valueStart, valueEnd);
                 while (/\s/.test(text[end] || '') && end < text.length) end++;
             } else {
                 while (end < text.length && text[end] !== ')') { if (text[end] === '\\') end++; end++; }
-                value = text.slice(start, end).trim();
+                valueEnd = end; while (valueEnd > start && /\s/.test(text[valueEnd - 1])) valueEnd--;
+                value = text.slice(start, valueEnd);
             }
             if (text[end] === ')') {
-                result += `url(${quoteCSS(address(value))})`; position = end + 1; importNext = false; continue;
+                const next = address(value);
+                if (preserveSyntax) {
+                    result += next === decodeCSS(value) ? text.slice(position, end + 1)
+                        : text.slice(position, valueStart) + escapeValue(next, quote) + text.slice(valueEnd, end + 1);
+                } else result += `url(${quoteCSS(next)})`;
+                position = end + 1; importNext = false; continue;
             }
         }
         if (!/\s/.test(character)) importNext = false;

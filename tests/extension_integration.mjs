@@ -34,10 +34,12 @@ async function until(operation, label, timeout = 15000) {
 }
 const foreign = http.createServer((request, response) => { response.setHeader('Content-Type', 'text/css'); response.end('#hero { border-top: 3px solid rgb(1, 2, 3); }'); });
 await new Promise(resolve => foreign.listen(0, '127.0.0.1', resolve));
-const foreignURL = `http://127.0.0.1:${foreign.address().port}/foreign.css`;
+const foreignURL = `http://127.0.0.1:${foreign.address().port}/external/main.css`;
+const authoredMain = "/* KEEP MAIN COMMENT */\r\n@import  './import.css';\r\n\r\n#hero {\r\n    /* KEEP DECLARATION COMMENT */\r\n    color: rgb(12, 34, 56);\r\n    padding: 12px;\r\n}\r\n";
+const authoredImport = "/* KEEP IMPORT COMMENT */\n.imported {\n\tbackground: url(\n\t    '../img/a.png'\n\t);\n}\n";
 const server = http.createServer((request, response) => {
-    if (request.url === '/css/main.css') { response.setHeader('Content-Type', 'text/css'); response.end('@import "./import.css";\n#hero { color: rgb(12, 34, 56); padding: 12px; }'); }
-    else if (request.url === '/css/import.css') { response.setHeader('Content-Type', 'text/css'); response.end('.imported { background: url(../img/a.png); }'); }
+    if (request.url === '/css/main.css') { response.setHeader('Content-Type', 'text/css'); response.end(authoredMain); }
+    else if (request.url === '/css/import.css') { response.setHeader('Content-Type', 'text/css'); response.end(authoredImport); }
     else if (request.url === '/html/page.html') {
         response.setHeader('Content-Type', 'text/html; charset=utf-8');
         response.setHeader('Content-Security-Policy', `default-src 'none'; style-src 'self' 'unsafe-inline' ${foreignURL}; img-src 'none'; script-src 'none'`);
@@ -258,11 +260,21 @@ try {
     const localHeader = events.find(event => event.sessionId === page && event.method === 'CSS.styleSheetAdded' && event.params.header.sourceURL.endsWith('/css/main.css')).params.header;
     const foreignHeader = events.find(event => event.sessionId === page && event.method === 'CSS.styleSheetAdded' && event.params.header.sourceURL === foreignURL).params.header;
     const localRule = matched.matchedCSSRules.find(item => item.rule.styleSheetId === localHeader.styleSheetId).rule;
-    await send('CSS.setStyleTexts', {edits: [{styleSheetId: localHeader.styleSheetId, range: localRule.style.range, text: ' color: rgb(9, 8, 7); padding: 22px; '}]}, page);
+    await send('CSS.setStyleTexts', {edits: [{styleSheetId: localHeader.styleSheetId, range: localRule.style.range, text: localRule.style.cssText.replace('padding: 12px;', 'padding: 22px;')}]}, page);
     await send('CSS.setStyleSheetText', {styleSheetId: foreignHeader.styleSheetId, text: '#hero { border-top: 7px solid rgb(100, 20, 30); }'}, page);
     await evaluate(page, `document.querySelector('#input').value='after'; document.querySelector('textarea').value='after'; document.styleSheets[0].insertRule('.runtime-added { margin: 17px; }', document.styleSheets[0].cssRules.length);`);
     assert.equal(await evaluate(page, `getComputedStyle(document.querySelector('#hero')).paddingTop`), '22px');
     assert.equal(await evaluate(page, `getComputedStyle(document.querySelector('#hero')).borderTopWidth`), '7px');
+    await evaluate(page, String.raw`(()=>{
+        const comment=document.createComment(' Code injected by Five-server ');document.head.append(comment);
+        const script=document.createElement('script');script.dataset.id='five-server';script.dataset.file='/example/private/page.html';script.src=location.origin+'/fiveserver.js';document.head.append(script);
+        const style=document.createElement('style');style.textContent='@keyframes fiveserverInfoPopup {0%{top:-40px}100%{top:4px}} #fiveserver-info-wrapper{max-width:98%}';document.head.append(style);
+        const popup=document.createElement('div');popup.id='fiveserver-info-wrapper';popup.textContent='development popup';document.body.append(popup);
+        for(const tag of ['script','style','aside']){const node=document.createElement(tag);node.dataset.visualqaExtension='test';node.textContent=tag==='style'?'.visualqa-fixture {color:red}':'visualqa fixture';document.body.append(node);}
+        const legitimate=document.createElement('script');legitimate.id='application-data';legitimate.type='application/ld+json';legitimate.textContent=JSON.stringify({name:'original application data'});document.head.append(legitimate);
+        const legitimateStyle=document.createElement('style');legitimateStyle.id='application-style';legitimateStyle.textContent='/* KEEP INLINE COMMENT */\n.application {\n    color: red;\n}\n';document.head.append(legitimateStyle);
+        const adopted=new CSSStyleSheet();adopted.replaceSync('@keyframes fiveserverInfoPopup {0%{top:0}} #fiveserver-info {color:red}');document.adoptedStyleSheets=[...document.adoptedStyleSheets,adopted];
+    })()`);
     await tool('[data-tool="save-as"]', `this.checked=false;this.dispatchEvent(new Event('input'));`);
     await pause(200);
     await tool('[data-tool="export"]', 'this.click();');
@@ -278,14 +290,38 @@ try {
     assert.equal(exportError, '');
     const output = await evaluate(panel, `(async()=>{const href=document.querySelector('#export-result a').href;const bytes=new Uint8Array(await (await fetch(href)).arrayBuffer());let text='';for(let i=0;i<bytes.length;i+=8192)text+=String.fromCharCode(...bytes.subarray(i,i+8192));return btoa(text);})()`);
     const zipPath = path.join(root, 'verification/chrome-edited-page.zip'); fs.writeFileSync(zipPath, Buffer.from(output, 'base64'));
-    const detail = await evaluate(panel, `(async()=>{const {collectExport,buildExport}=await import('./export.mjs');const {snapshot,contents}=await collectExport();const result=buildExport(snapshot,contents,null,null);return {files:result.files,manifest:result.manifest,resourceUrls:[...contents.keys()]};})()`);
+    const detail = await evaluate(panel, `(async()=>{const {collectExport,buildExport}=await import('./export.mjs');const {snapshot,contents}=await collectExport();const result=buildExport(snapshot,contents,null,null);return {filename:result.filename,files:result.files,manifest:result.manifest,resourceUrls:[...contents.keys()]};})()`);
     const html = detail.files.find(file => file.name.startsWith('html/')).content;
     assert.ok(html.includes('개발자도구에서 수정한 제목')); assert.ok(html.includes('value="after"')); assert.ok(html.includes('>after</textarea>'));
     assert.ok(!html.includes('visualqa-overlay')); assert.ok(!html.includes('visualqa-tools')); assert.ok(!html.includes('data-visualqa-export-'));
     assert.ok(detail.files.some(file => file.name.startsWith('css/') && file.content.includes('padding: 22px')));
     assert.ok(detail.files.some(file => file.name.startsWith('css/') && file.content.includes('.runtime-added')));
     assert.ok(detail.files.some(file => file.name.startsWith('css/') && file.content.includes('7px solid')), 'cross-origin DevTools CSS edits must be exported');
-    assert.ok(detail.files.some(file => file.name.startsWith('css/') && file.content.includes('url("http://127.0.0.1:')));
+    assert.ok(detail.files.some(file => file.name.startsWith('css/') && file.content.includes("'http://127.0.0.1:")));
+    assert.equal(detail.manifest.html, 'html/page.html');
+    assert.ok(detail.files.some(file => file.name === 'css/main.css'));
+    assert.ok(detail.files.some(file => file.name === 'css/source-2/main.css'));
+    assert.ok(detail.files.some(file => file.name === 'css/import.css'));
+    const mainExport = detail.files.find(file => file.name === 'css/main.css').content;
+    assert.ok(mainExport.includes(authoredMain.replace('./import.css', 'import.css').replace('padding: 12px;', 'padding: 22px;')));
+    const importExport = detail.files.find(file => file.name === 'css/import.css').content;
+    assert.equal(importExport, authoredImport.replace('../img/a.png', new URL('../img/a.png', url.replace('/html/page.html','/css/import.css')).href));
+    assert.ok(html.includes('../css/main.css') && html.includes('../css/source-2/main.css'));
+    assert.ok(!/fiveserver|five-server|visualqa fixture|visualqa-fixture|data-visualqa|private\/page/i.test(html));
+    assert.ok(html.includes('application-data') && html.includes('original application data'));
+    assert.ok(html.includes('/* KEEP INLINE COMMENT */\n.application {\n    color: red;\n}\n'));
+    assert.ok(!detail.files.some(file => file.content.includes('fiveserverInfoPopup')));
+    assert.equal(detail.filename, 'page.zip');
+    let cssBenchmark;
+    if (process.argv.includes('--benchmark-css')) {
+        cssBenchmark = await evaluate(panel, `(async()=>{const {buildExport}=await import('./export.mjs');
+            const source=Array.from({length:16000},(_,i)=>'/* keep '+i+' */\\r\\n.bulk-'+i+' {\\r\\n    color: #abcdef;\\r\\n    margin: 0;\\r\\n}\\r\\n').join('');
+            const parsed=new CSSStyleSheet();parsed.replaceSync(source);const rules=[...parsed.cssRules].map(rule=>rule.cssText);
+            const snapshot={url:'https://fixture.test/html/page.html',base:'https://fixture.test/html/page.html',html:'<html><head><link data-visualqa-export-sheet="bulk" href="/css/original.css"></head><body></body></html>',doctype:'<!doctype html>',warnings:[],sheets:[{id:'bulk',url:'https://fixture.test/css/original.css',rules,css:rules.join('\\n')}]};
+            const start=performance.now(),result=buildExport(snapshot,new Map([['https://fixture.test/css/original.css',source]]),null,null);
+            return {rules:rules.length,characters:source.length,milliseconds:Math.round(performance.now()-start),exact:result.files.find(file=>file.name==='css/original.css').content===source};})()`);
+        assert.equal(cssBenchmark.rules, 16000); assert.equal(cssBenchmark.exact, true);
+    }
     const responsiveHeight = await evaluate(page, 'document.documentElement.scrollHeight');
     // Responsive overlay behavior is exercised in the real content script and native sidepanel.
     async function state() { return (await evaluate(panel, `chrome.runtime.sendMessage({type:'status',tabId:chrome.devtools.inspectedWindow.tabId})`)).value; }
@@ -399,8 +435,8 @@ try {
     await send('Emulation.setDeviceMetricsOverride', {width: 1100, height: 1600, deviceScaleFactor: 1, mobile: false}, frontSession);
     const preview = await send('Page.captureScreenshot', {format: 'png', captureBeyondViewport: true}, frontSession);
     fs.writeFileSync(path.join(root, 'verification/chrome-devtools.png'), Buffer.from(preview.data, 'base64'));
-    receipt = {status: 'PASS', extensionVersion: manifest.version, testedFiles, browser: (await send('Browser.getVersion')).product, tests: ['original design import', 'original image overlay', 'native Chrome sidepanel', 'DevTools without sidePanel namespace', 'no page tool panel', 'unchanged page styles and geometry', 'sidepanel file import and connection', 'options and findings tabs', 'keyboard tab navigation', 'finding list rendering', 'finding list navigation', 'previous and next findings', 'sidepanel opacity', 'active tab isolation', 'native sidepanel close and reopen', 'sidepanel export through native DevTools', 'strict image CSP overlay', 'pointer passthrough', 'unchanged layout height', 'finding navigation', 'native Elements selection', 'DOM edits', 'native Styles edits', 'cross-origin CSS edits', 'runtime CSSOM rules', 'form state', 'ZIP export', 'overlay and tools excluded from HTML', 'relative CSS imports and asset URLs', 'hide toggle', 'reload reapplication', 'viewport mismatch', 'stale overlay cleanup', 'missing variant hides wrong design', 'PC and MO automatic pairing', '1023 and 1024 boundary switching', 'fixed minimum canvas width', 'flex centered canvas', 'PC and MO independent adjustments', 'variant findings switch', 'wide and narrow viewport geometry', 'custom breakpoint', 'rapid resize convergence', 'standalone extension workspace', 'open actual page with overlay'],
-        originalImage: {width: imageWidth, height: imageHeight, display: review.display},
+    receipt = {status: 'PASS', extensionVersion: manifest.version, testedFiles, browser: (await send('Browser.getVersion')).product, tests: ['original design import', 'original image overlay', 'native Chrome sidepanel', 'DevTools without sidePanel namespace', 'no page tool panel', 'unchanged page styles and geometry', 'sidepanel file import and connection', 'options and findings tabs', 'keyboard tab navigation', 'finding list rendering', 'finding list navigation', 'previous and next findings', 'sidepanel opacity', 'active tab isolation', 'native sidepanel close and reopen', 'sidepanel export through native DevTools', 'strict image CSP overlay', 'pointer passthrough', 'unchanged layout height', 'finding navigation', 'native Elements selection', 'DOM edits', 'native Styles edits', 'cross-origin CSS edits', 'runtime CSSOM rules', 'form state', 'ZIP export', 'overlay and tools excluded from HTML', 'relative CSS imports and asset URLs', 'original HTML and CSS filenames', 'duplicate filenames separated by folder', 'authored CSS CRLF and indentation', 'authored CSS comments', 'CSS URL whitespace and quote preservation', 'Five Server scripts styles markup removed', 'review scripts styles markup removed', 'adopted tooling stylesheet removed', 'legitimate scripts and inline style preserved', 'hide toggle', 'reload reapplication', 'viewport mismatch', 'stale overlay cleanup', 'missing variant hides wrong design', 'PC and MO automatic pairing', '1023 and 1024 boundary switching', 'fixed minimum canvas width', 'flex centered canvas', 'PC and MO independent adjustments', 'variant findings switch', 'wide and narrow viewport geometry', 'custom breakpoint', 'rapid resize convergence', 'standalone extension workspace', 'open actual page with overlay'],
+        cssBenchmark, originalImage: {width: imageWidth, height: imageHeight, display: review.display},
         cssFiles: detail.manifest.stylesheets.length, cssSources: detail.manifest.stylesheets, warnings: detail.manifest.warnings, zip: zipPath};
     fs.writeFileSync(path.join(root, 'verification/chrome-extension.json'), JSON.stringify(receipt, null, 2));
     console.log(JSON.stringify(receipt, null, 2));
