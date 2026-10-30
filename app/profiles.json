@@ -1,0 +1,19 @@
+{
+  "default": {
+    "name": "기존 시안 검수",
+    "toggleSelectors": [
+      ".subscribe_caption_toggle",
+      ".concierge_accrodion__btn",
+      ".concierge_faq__list .concierge_faq__head"
+    ],
+    "diagnosticRoots": [
+      ".subscribe_wrap",
+      ".concierge_wrap"
+    ],
+    "elementSelector": "h1,h2,h3,h4,h5,h6,p,li,dt,dd,img,table,details,button,a,span,strong,em,th,td,label,section,article,[class]",
+    "readySelector": "body",
+    "captureSelector": "",
+    "settleMs": 350,
+    "timeoutMs": 90000
+  }
+}

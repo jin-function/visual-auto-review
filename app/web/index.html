@@ -1,0 +1,506 @@
+<!doctype html>
+<html lang="ko">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>
+            시안 검수
+        </title>
+        <link rel="stylesheet" href="/style.css">
+        <script src="/app.js" defer>
+        </script>
+        <script src="/source_editor.js" defer>
+        </script>
+    </head>
+    <body>
+        <div class="app">
+            <aside class="sidebar">
+                <div class="brand">
+                    <span class="brand-mark">V</span>
+                    <div>
+                        <strong>
+                            시안 검수
+                        </strong>
+                        <p>
+                            프로젝트와 검수 이력
+                        </p>
+                    </div>
+                </div>
+                <button id="new-project" class="primary full" type="button">
+                    + 새 프로젝트
+                </button>
+                <p class="eyebrow">
+                    프로젝트
+                </p>
+                <nav id="project-list" aria-label="프로젝트 목록">
+                </nav>
+                <div class="sidebar-footer">
+                    <span class="dot"></span>
+                    <span>로컬 저장 · v3.1</span>
+                </div>
+            </aside>
+            <main>
+                <header class="workspace-header">
+                    <div>
+                        <p class="eyebrow">
+                            VISUAL REVIEW
+                        </p>
+                        <h1 id="project-title">
+                            시안과 구현을 한곳에서
+                        </h1>
+                        <p id="project-url" class="muted">
+                            프로젝트를 등록하면 같은 조건으로 검수를 이어갈 수 있습니다.
+                        </p>
+                    </div>
+                    <div class="actions">
+                        <button id="edit-project" type="button" hidden>
+                            프로젝트 설정
+                        </button>
+                        <button id="start-run" class="primary" type="button" hidden>
+                            새 검수 시작
+                        </button>
+                    </div>
+                </header>
+                <div id="welcome" class="welcome">
+                    <div class="welcome-icon">
+                        ◎
+                    </div>
+                    <h2>
+                        첫 프로젝트를 등록하세요.
+                    </h2>
+                    <p>
+                        페이지 주소와 시안을 한 번 등록하세요.
+                        검수 판단과 보정 이력은 다음 검수에도 이어집니다.
+                    </p>
+                    <button id="welcome-new" class="primary" type="button">
+                        프로젝트 등록
+                    </button>
+                </div>
+                <section id="workspace" hidden>
+                    <div class="run-toolbar">
+                        <label for="run-select">
+                            검수 이력
+                        </label>
+                        <select id="run-select" aria-label="검수 이력">
+                        </select>
+                        <span id="run-status" class="badge"></span>
+                        <button id="retry-run" type="button" hidden>
+                            실패 항목 재시도
+                        </button>
+                        <button id="export-run" type="button">
+                            결과 내보내기
+                        </button>
+                        <button id="prune-runs" class="quiet" type="button">
+                            이력 정리
+                        </button>
+                    </div>
+                    <div id="target-tabs" class="tabs" role="tablist" aria-label="검수 대상">
+                    </div>
+                    <div id="processing" class="notice" hidden>
+                    </div>
+                    <div id="result" hidden>
+                        <div class="metrics" id="metrics">
+                        </div>
+                        <div id="capture-warnings" class="notice" hidden>
+                        </div>
+                        <p id="history-summary" class="history-summary">
+                        </p>
+                        <div class="review-toolbar">
+                            <div class="actions">
+                                <label for="revision-select">
+                                    비교 버전
+                                </label>
+                                <select id="revision-select">
+                                </select>
+                                <button id="open-html-source" type="button">
+                                    HTML 열기
+                                </button>
+                                <button id="chrome-review" type="button">
+                                    Chrome용 검수 파일
+                                </button>
+                            </div>
+                            <div class="actions">
+                                <label for="zoom">
+                                    확대
+                                </label>
+                                <select id="zoom">
+                                    <option value="fit">
+                                        화면 맞춤
+                                    </option>
+                                    <option value="0.5">
+                                        50%
+                                    </option>
+                                    <option value="1">
+                                        100%
+                                    </option>
+                                    <option value="2">
+                                        200%
+                                    </option>
+                                </select>
+                                <label class="check">
+                                    <input id="sync-scroll" type="checkbox" checked>
+                                    스크롤 연결
+                                </label>
+                            </div>
+                        </div>
+                        <p class="source-hint">
+                            차이 이미지의 위치나 차이 항목을 누르면 해당 요소의 소스로 이동합니다.
+                            Chrome에서 실시간으로 수정하려면 검수 파일을 저장한 뒤 ‘시안 검수’ 확장 도구에서 불러오세요.
+                        </p>
+                        <div class="review-layout">
+                            <aside class="findings-panel">
+                                <div class="panel-heading">
+                                    <strong id="finding-count">
+                                        차이 항목
+                                    </strong>
+                                    <select id="finding-filter" aria-label="검수 상태 필터">
+                                        <option value="all">
+                                            전체
+                                        </option>
+                                        <option value="pending">
+                                            확인 필요
+                                        </option>
+                                        <option value="fix">
+                                            수정 필요
+                                        </option>
+                                        <option value="intentional">
+                                            의도된 차이
+                                        </option>
+                                        <option value="resolved">
+                                            해결
+                                        </option>
+                                    </select>
+                                </div>
+                                <div id="findings" class="findings">
+                                </div>
+                            </aside>
+                            <div class="image-comparison">
+                                <div class="image-panel">
+                                    <div class="image-heading">
+                                        <strong>
+                                            기준 시안
+                                        </strong>
+                                        <span>배율 적용 후</span>
+                                    </div>
+                                    <div class="image-scroll" id="reference-scroll">
+                                        <div class="image-stage">
+                                            <img id="reference-image" alt="기준 시안">
+                                            <div class="region-marker" hidden>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="image-panel">
+                                    <div class="image-heading">
+                                        <strong>
+                                            실제 캡처
+                                        </strong>
+                                        <span>보정값 적용 후</span>
+                                    </div>
+                                    <div class="image-scroll" id="actual-scroll">
+                                        <div class="image-stage">
+                                            <img id="actual-image" alt="실제 캡처">
+                                            <div class="region-marker" hidden>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="image-panel">
+                                    <div class="image-heading">
+                                        <strong>
+                                            차이 강조
+                                        </strong>
+                                        <span>빨간색: 확인 영역</span>
+                                    </div>
+                                    <div class="image-scroll" id="diff-scroll">
+                                        <div class="image-stage">
+                                            <img id="diff-image" alt="차이 강조">
+                                            <div class="region-marker" hidden>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <section id="finding-detail" class="detail-card" hidden>
+                            <div class="detail-heading">
+                                <div>
+                                    <p class="eyebrow">
+                                        선택한 차이
+                                    </p>
+                                    <h2 id="finding-title">
+                                    </h2>
+                                </div>
+                                <span id="finding-location" class="muted"></span>
+                                <button id="edit-finding-source" type="button">
+                                    해당 요소 수정
+                                </button>
+                            </div>
+                            <form id="review-form">
+                                <div class="review-fields">
+                                    <label>
+                                        검수 상태
+                                        <select id="review-status">
+                                            <option value="pending">
+                                                확인 필요
+                                            </option>
+                                            <option value="fix">
+                                                수정 필요
+                                            </option>
+                                            <option value="intentional">
+                                                의도된 차이
+                                            </option>
+                                            <option value="resolved">
+                                                해결
+                                            </option>
+                                        </select>
+                                    </label>
+                                    <label>
+                                        심각도
+                                        <select id="review-severity">
+                                            <option value="low">
+                                                낮음
+                                            </option>
+                                            <option value="medium">
+                                                보통
+                                            </option>
+                                            <option value="high">
+                                                높음
+                                            </option>
+                                        </select>
+                                    </label>
+                                    <label class="note-field">
+                                        검수 메모
+                                        <textarea id="review-note" rows="2" placeholder="확인한 내용과 수정 방향을 기록하세요.">
+                                        </textarea>
+                                    </label>
+                                    <button class="primary" type="submit">
+                                        판단 저장
+                                    </button>
+                                </div>
+                            </form>
+                            <p id="previous-review" class="muted">
+                            </p>
+                            <div id="related-elements">
+                            </div>
+                        </section>
+                        <details class="detail-card">
+                            <summary>
+                                위치 보정과 재계산
+                            </summary>
+                            <p class="muted">
+                                보정값과 이유를 기록하면 새 비교 버전을 만듭니다.
+                                기존 결과와 판단은 보존됩니다.
+                            </p>
+                            <form id="alignment-form" class="alignment-fields">
+                                <label>
+                                    실제 캡처 Y 이동 (px)
+                                    <input id="alignment-y" type="number" min="-10000" max="10000" step="1" value="0" required>
+                                </label>
+                                <label class="grow">
+                                    보정 이유
+                                    <input id="alignment-reason" type="text" maxlength="1000" placeholder="예: 시안 상단의 외부 여백 제외" required>
+                                </label>
+                                <button type="submit">
+                                    보정하여 전체 재계산
+                                </button>
+                            </form>
+                        </details>
+                        <details class="detail-card">
+                            <summary>
+                                구간별 수치와 캡처 정보
+                            </summary>
+                            <p class="muted">
+                                구간 수치는 전체 비교와 같은 차이 데이터로 계산합니다.
+                                수치만으로 최종 검수를 완료하지 않습니다.
+                            </p>
+                            <div id="strip-table">
+                            </div>
+                            <pre id="capture-info">
+                            </pre>
+                        </details>
+                        <details id="previous-items" class="detail-card" hidden>
+                            <summary>
+                                이번 비교에서 검출되지 않은 이전 항목
+                            </summary>
+                            <p class="muted">
+                                위치나 형태가 바뀌어 검출되지 않을 수도 있습니다.
+                                실제 해결 여부는 이전 결과와 대조하세요.
+                            </p>
+                            <div id="previous-item-list">
+                            </div>
+                        </details>
+                    </div>
+                </section>
+                <footer class="workspace-footer">
+                    <span id="storage-label">로컬에 저장됩니다.</span>
+                </footer>
+            </main>
+        </div>
+        <dialog id="project-dialog">
+            <form id="project-form">
+                <div class="dialog-heading">
+                    <h2 id="dialog-title">
+                        새 프로젝트
+                    </h2>
+                    <button id="close-dialog" class="quiet" type="button" aria-label="닫기">
+                        ✕
+                    </button>
+                </div>
+                <label>
+                    프로젝트 이름
+                    <input id="project-name-input" type="text" maxlength="160" placeholder="예: W45 컨시어지 세탁실" required>
+                </label>
+                <label>
+                    검수할 페이지 주소
+                    <input id="project-url-input" type="text" placeholder="http://127.0.0.1:5500/..." required>
+                </label>
+                <details id="source-connection" class="settings-details">
+                    <summary>
+                        편집할 소스 연결
+                    </summary>
+                    <p class="muted">
+                        연결한 폴더 안의 HTML·CSS를 바로 수정할 수 있습니다.
+                        저장할 때 수정 전 파일을 자동으로 백업합니다.
+                    </p>
+                    <label>
+                        소스 폴더
+                        <div class="path-field">
+                            <input id="source-root-input" type="text" placeholder="로컬 프로젝트 폴더 경로">
+                            <button id="choose-source-root" type="button">
+                                폴더 선택
+                            </button>
+                        </div>
+                    </label>
+                    <label>
+                        페이지 HTML 파일
+                        <div class="path-field">
+                            <input id="source-html-input" type="text" placeholder="예: html/w46_living-room-gaming-tv.html">
+                            <button id="choose-source-html" type="button">
+                                파일 선택
+                            </button>
+                        </div>
+                    </label>
+                    <label>
+                        소스 폴더에 해당하는 URL (자동 설정 가능)
+                        <input id="source-prefix-input" type="text" placeholder="예: http://127.0.0.1:5500/kr/story/home-curation/concierge/">
+                    </label>
+                </details>
+                <div id="target-fields">
+                </div>
+                <button id="add-target" type="button">
+                    + 검수 크기 추가
+                </button>
+                <details class="settings-details">
+                    <summary>
+                        비교·페이지 설정
+                    </summary>
+                    <div class="field-grid">
+                        <label>
+                            색상 허용값 (1~255)
+                            <input id="threshold-input" type="number" min="1" max="255" value="24" required>
+                        </label>
+                        <label>
+                            텍스트 경계 허용치
+                            <select id="tolerance-input">
+                                <option value="0">
+                                    없음
+                                </option>
+                                <option value="1" selected>
+                                    주변 1px
+                                </option>
+                                <option value="2">
+                                    주변 2px
+                                </option>
+                            </select>
+                        </label>
+                        <label>
+                            구간 높이 (px)
+                            <input id="strip-input" type="number" min="64" max="4000" value="600" required>
+                        </label>
+                    </div>
+                    <label>
+                        페이지별 캡처 설정
+                        <textarea id="profile-input" rows="12" spellcheck="false">
+                        </textarea>
+                    </label>
+                    <p class="muted">
+                        새 페이지의 준비 요소, 캡처 범위와 진단 범위를 설정할 수 있습니다.
+                        기본 아코디언 펼침 동작은 기존과 같습니다.
+                    </p>
+                </details>
+                <p id="project-error" class="error" role="alert">
+                </p>
+                <div class="dialog-actions">
+                    <button id="cancel-project" type="button">
+                        취소
+                    </button>
+                    <button id="save-project" class="primary" type="submit">
+                        프로젝트 저장
+                    </button>
+                </div>
+            </form>
+        </dialog>
+        <section id="source-workbench" class="source-workbench" aria-label="요소 소스 편집" hidden>
+            <div class="source-heading">
+                <div>
+                    <strong id="source-element-title">
+                        요소 소스
+                    </strong>
+                    <p id="source-status" class="muted" role="status">
+                    </p>
+                </div>
+                <div class="actions">
+                    <button id="source-configure" type="button">
+                        소스 연결
+                    </button>
+                    <button id="close-source" class="quiet" type="button" aria-label="소스 편집 닫기">
+                        ✕
+                    </button>
+                </div>
+            </div>
+            <div id="source-editor-body" hidden>
+                <div class="source-controls">
+                    <label>
+                        선택한 요소
+                        <select id="source-elements">
+                        </select>
+                    </label>
+                    <label class="grow">
+                        원본 HTML·적용 CSS
+                        <select id="source-files">
+                        </select>
+                    </label>
+                    <button id="source-open-editor" type="button">
+                        편집기로 열기
+                    </button>
+                </div>
+                <div class="code-layout">
+                    <pre id="source-line-numbers" aria-hidden="true">
+                    </pre>
+                    <textarea id="source-code" spellcheck="false" wrap="off" aria-label="원본 소스 편집">
+                    </textarea>
+                </div>
+                <div class="source-save-toolbar">
+                    <span id="source-file-state" class="muted"></span>
+                    <div class="actions">
+                        <button id="source-reload" type="button">
+                            다시 불러오기
+                        </button>
+                        <button id="source-undo" type="button" disabled>
+                            직전 저장 되돌리기
+                        </button>
+                        <button id="source-save" type="button">
+                            저장
+                        </button>
+                        <button id="source-save-rerun" class="primary" type="button">
+                            저장 후 재검수
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+        <div id="toast" class="toast" role="status" hidden>
+        </div>
+    </body>
+</html>
