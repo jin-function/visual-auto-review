@@ -521,7 +521,10 @@ try {
         {env:{...process.env,PYTHONPATH:path.join(root,'app'),PYTHONDONTWRITEBYTECODE:'1'},stdio:['pipe','pipe','pipe']});
     let appOutput='', appErrors='';
     appServer.stdout.on('data',data=>{appOutput+=data;});appServer.stderr.on('data',data=>{appErrors+=data;});
-    const appAddress = await until(()=>appOutput.split('\n').filter(Boolean).map(line=>{try{return JSON.parse(line);}catch{return {};}}).find(item=>item.url)?.url,'temporary app UI server');
+    const appAddress = await until(()=>{
+        if(appServer.exitCode!==null)throw new Error(`App fixture exited ${appServer.exitCode}: ${appErrors}`);
+        return appOutput.split('\n').filter(Boolean).map(line=>{try{return JSON.parse(line);}catch{return {};}}).find(item=>item.url)?.url;
+    },'temporary app UI server',60000).catch(error=>{throw new Error(`${error.message}\n${appErrors}`);});
     const appTarget = await send('Target.createTarget',{url:appAddress});
     const appUI = await attach(appTarget.targetId);await send('Runtime.enable',{},appUI);await send('Page.enable',{},appUI);
     await send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false},appUI);
@@ -532,7 +535,7 @@ try {
     assert.equal(await evaluate(appUI,`document.querySelector('#pc-overlay-target').value`),'pc');
     assert.equal(await evaluate(appUI,`document.querySelector('#mo-overlay-target').value`),'mo');
     await evaluate(appUI,`document.querySelector('#breakpoint-input').value='900';document.querySelector('#project-form').requestSubmit()`);
-    await until(()=>evaluate(appUI,`!document.querySelector('#project-dialog').open`),'project settings saved');
+    await until(()=>evaluate(appUI,`!document.querySelector('#project-dialog').open && !document.querySelector('#save-project').disabled && !!state.run && !!state.result`),'project settings saved');
     const previousUIRun = await evaluate(appUI,'state.run.id');
     await evaluate(appUI,`document.querySelector('#start-run').click()`);
     await until(()=>evaluate(appUI,`state.run?.id!==${JSON.stringify(previousUIRun)} && document.querySelector('#run-status').textContent==='완료' && !document.querySelector('#result').hidden`),'new UI run completes');
