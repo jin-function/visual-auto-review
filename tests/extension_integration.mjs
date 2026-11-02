@@ -142,8 +142,9 @@ try {
         for (const target of (await targets()).filter(target => target.url === extensionOrigin + '/devtools.html')) {
             const session = await attach(target.targetId);
             await send('Runtime.enable', {}, session); await send('Log.enable', {}, session);
-            const inspected = await evaluate(session, `new Promise(resolve=>chrome.devtools.inspectedWindow.eval('location.href',resolve))`);
-            if (inspected === url) { devtools = session; devtoolsParent = target.parentId; return true; }
+            const inspected = await evaluate(session, `new Promise(resolve=>chrome.devtools.inspectedWindow.eval('location.href',(value,error)=>resolve({value,error})))`);
+            if (inspected.error) { await send('Target.detachFromTarget', {sessionId: session}); throw new Error('DevTools evaluation: '+JSON.stringify(inspected.error)); }
+            if (inspected.value === url) { devtools = session; devtoolsParent = target.parentId; return true; }
             await send('Target.detachFromTarget', {sessionId: session});
         }
         return false;
