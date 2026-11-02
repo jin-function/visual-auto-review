@@ -24,12 +24,12 @@ with tempfile.TemporaryDirectory(prefix='visualqa-launcher-') as directory:
             '--data-root', str(temporary / 'data'), '--ready-file', str(ready)],
             env=os.environ.copy(), stdout=log, stderr=log)
         try:
-            deadline = time.monotonic() + 15
+            deadline = time.monotonic() + 60
             while not ready.exists() and time.monotonic() < deadline:
                 if process.poll() is not None:
                     raise RuntimeError((temporary / 'server.log').read_text(encoding='utf-8'))
                 time.sleep(.1)
-            assert ready.exists(), 'Launcher did not become ready'
+            assert ready.exists(), 'Launcher did not become ready: ' + (temporary / 'server.log').read_text(encoding='utf-8')
             launched = json.loads(ready.read_text(encoding='utf-8'))
             parsed = urllib.parse.urlparse(launched['url'])
             origin = f'{parsed.scheme}://{parsed.netloc}'

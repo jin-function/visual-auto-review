@@ -25,7 +25,7 @@ class PlatformTests(unittest.TestCase):
             'PROGRAMFILES(X86)': '/new-system/Program Files (x86)',
         }):
             self.assertEqual(default_data_root(), Path('/new-user/Local/VisualQA/v3'))
-            candidates = browser_candidates()
+            candidates = [Path(candidate).as_posix() for candidate in browser_candidates() if candidate]
             self.assertIn('/new-user/Local/Google/Chrome/Application/chrome.exe', candidates)
             self.assertIn('/new-system/Program Files/Google/Chrome/Application/chrome.exe', candidates)
             self.assertFalse(any('/Users/spring' in str(candidate) for candidate in candidates))

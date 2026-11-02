@@ -23,9 +23,9 @@ process = subprocess.Popen([sys.executable, str(root/'app/visual_qa.py'), '--ser
 deadline = time.monotonic()+15
 while not ready_file.exists() and time.monotonic()<deadline:
     if process.poll() is not None:
-        raise RuntimeError((data_root/'server.log').read_text())
+        raise RuntimeError((data_root/'server.log').read_text(encoding="utf-8"))
     time.sleep(.1)
-ready = json.loads(ready_file.read_text())
+ready = json.loads(ready_file.read_text(encoding="utf-8"))
 parsed = urllib.parse.urlparse(ready['url'])
 origin = f'{parsed.scheme}://{parsed.netloc}'
 token = urllib.parse.parse_qs(parsed.query)['token'][0]
@@ -53,10 +53,10 @@ def execute(project_id):
 
 
 files=data_root/'source';(files/'html').mkdir(parents=True);(files/'css').mkdir()
-text=(root/'tests/fixture.html').read_text().replace('        <style>','        <link rel="stylesheet" href="../css/style.css">\n        <style>')
-(files/'html/page.html').write_text(text)
+text=(root/'tests/fixture.html').read_text(encoding="utf-8").replace('        <style>','        <link rel="stylesheet" href="../css/style.css">\n        <style>')
+(files/'html/page.html').write_text(text, encoding="utf-8")
 css='#hero {\n    border-top: 4px solid #087f74;\n}\n#hero h1 {\n    font-size: 30px;\n}\n'
-(files/'css/style.css').write_text(css)
+(files/'css/style.css').write_text(css, encoding="utf-8")
 image=Image.new('RGB',(390,1060),'white');stream=io.BytesIO();image.save(stream,'PNG')
 asset=api('/api/assets',{'name':'소스 검증 시안.png','content':base64.b64encode(stream.getvalue()).decode()})
 project=api('/api/projects',{'name':'요소 소스 편집 검증','url':(files/'html/page.html').as_uri(),
@@ -81,15 +81,15 @@ assert restored['content']==css
 restored_run,restored_result=execute(project['id'])
 assert restored_result['metrics']['verdict']=='PASS',restored_result['metrics']
 stale=api('/api/source/file?project='+project['id']+'&path=css/style.css')
-(files/'css/style.css').write_text(css+'\n/* 외부 편집 */\n')
+(files/'css/style.css').write_text(css+'\n/* 외부 편집 */\n', encoding="utf-8")
 try:
     api('/api/source/save',{'project_id':project['id'],'path':stale['path'],'sha256':stale['sha256'],'connection_id':stale['connection_id'],'content':'덮어쓰기 금지'})
     raise AssertionError('Conflict was not rejected')
 except urllib.error.HTTPError as error:assert error.code==400
-assert '외부 편집' in (files/'css/style.css').read_text()
-(files/'css/style.css').write_text(css)
+assert '외부 편집' in (files/'css/style.css').read_text(encoding="utf-8")
+(files/'css/style.css').write_text(css, encoding="utf-8")
 receipt={'status':'PASS','ready_file':str(ready_file),'project_id':project['id'],'run_id':restored_run['id'],
          'data_root':str(data_root/'data'),'source_root':str(files),'links':links['links'],'warnings':links['warnings'],
          'changed_pixels_after_edit':changed['metrics']['changed_pixels'],'verdict_after_undo':restored_result['metrics']['verdict']}
-(root/'verification/source-integration.json').write_text(json.dumps(receipt,ensure_ascii=False,indent=2))
+(root/'verification/source-integration.json').write_text(json.dumps(receipt,ensure_ascii=False,indent=2), encoding="utf-8")
 print(json.dumps({'status':'PASS','ready_file':str(ready_file),'links':len(links['links']),'changed_pixels':changed['metrics']['changed_pixels'],'undo':'PASS'},ensure_ascii=False),flush=True)

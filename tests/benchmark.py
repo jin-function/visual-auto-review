@@ -25,5 +25,5 @@ metrics = {'size':'1920x12000', 'pixels':23040000, 'seconds':round(elapsed,2),
 assert metrics['changed_pixels'] == 64 and metrics['verdict'] == 'REVIEW'
 destination = Path(__file__).parents[1] / 'verification/benchmark.json'
 destination.parent.mkdir(exist_ok=True)
-destination.write_text(json.dumps(metrics,indent=2)+'\n')
+destination.write_text(json.dumps(metrics,indent=2)+'\n', encoding="utf-8")
 print(json.dumps(metrics))

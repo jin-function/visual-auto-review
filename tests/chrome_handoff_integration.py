@@ -59,7 +59,7 @@ with tempfile.TemporaryDirectory(prefix='visualqa-chrome-api-') as directory:
         digest = hashlib.sha256((root / 'app/page_state.js').read_bytes()).hexdigest()
         receipt = {'status': 'PASS', 'checks': ['selected revision download', 'stored original image bytes', 'original display dimensions', 'placement coordinates', 'no token accepted', 'foreign website rejected', 'extension origin rejected'],
             'accordion_module_sha256': digest}
-        (root / 'verification/chrome-handoff.json').write_text(json.dumps(receipt, ensure_ascii=False, indent=2))
+        (root / 'verification/chrome-handoff.json').write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8")
         print(json.dumps(receipt, ensure_ascii=False))
     finally:
         server.shutdown(); server.server_close(); service.close(); thread.join(timeout=5)

@@ -12,7 +12,7 @@ from pathlib import Path
 
 from PIL import Image
 
-ready = json.loads(Path(sys.argv[1] if len(sys.argv) > 1 else str(Path(tempfile.gettempdir()) / 'visualqa-v3-ready.json')).read_text())
+ready = json.loads(Path(sys.argv[1] if len(sys.argv) > 1 else str(Path(tempfile.gettempdir()) / 'visualqa-v3-ready.json')).read_text(encoding="utf-8"))
 url = urllib.parse.urlparse(ready['url'])
 origin = f'{url.scheme}://{url.netloc}'
 token = urllib.parse.parse_qs(url.query)['token'][0]
@@ -84,5 +84,5 @@ for filename in ('reference.png','actual.png','diff.png','overlay.png'):
     response = request(f"/files/{run['id']}/mobile/{current['id']}/{filename}")
     assert response.headers['Content-Type'] == 'image/png'
     response.close()
-(Path(__file__).resolve().parents[1] / 'verification/app-integration.json').write_text(json.dumps({'project_id':project['id'],'run_id':run['id'],'revision_id':current['id'],'capture':current['capture']['browser'],'findings':len(current['findings']),'metrics':current['metrics']},ensure_ascii=False,indent=2))
+(Path(__file__).resolve().parents[1] / 'verification/app-integration.json').write_text(json.dumps({'project_id':project['id'],'run_id':run['id'],'revision_id':current['id'],'capture':current['capture']['browser'],'findings':len(current['findings']),'metrics':current['metrics']},ensure_ascii=False,indent=2), encoding="utf-8")
 print(json.dumps({'integration':'PASS','run_id':run['id'],'findings':len(current['findings']),'accordion':'1/1 opened','browser':current['capture']['browser']['product']},ensure_ascii=False))

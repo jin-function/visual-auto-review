@@ -17,7 +17,7 @@ from qa.storage import Store, atomic_json
 
 class EngineTests(unittest.TestCase):
     def test_original_accordion_body_is_preserved(self):
-        module = (Path(__file__).parents[1] / "app/page_state.js").read_text()
+        module = (Path(__file__).parents[1] / "app/page_state.js").read_text(encoding="utf-8")
         body = module.split("async function openAccordions(send, profile, delay) {\n", 1)[1].split("    return toggles;\n}", 1)[0]
         self.assertEqual(hashlib.sha256(body.encode()).hexdigest(),
                          "b272c7ad90e8279bc1fd742ca2d6b4476c5de0a9440d4cdf2cd5216b34584280")

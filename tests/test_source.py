@@ -16,8 +16,8 @@ class SourceTests(unittest.TestCase):
         (self.files / "html").mkdir()
         (self.files / "css").mkdir()
         self.text = '<!doctype html>\n<html>\n    <head>\n        <link rel="stylesheet" href="../css/style.css">\n    </head>\n    <body>\n        <section id="hero">\n            <h1>\n                검수 제목\n            </h1>\n        </section>\n    </body>\n</html>\n'
-        (self.files / "html/page.html").write_text(self.text)
-        (self.files / "css/style.css").write_text('#hero {\n    padding: 20px;\n}\n')
+        (self.files / "html/page.html").write_text(self.text, encoding="utf-8")
+        (self.files / "css/style.css").write_text('#hero {\n    padding: 20px;\n}\n', encoding="utf-8")
         self.store = Store(self.root / "data")
         self.config = normalize_source({"root": str(self.files), "html": "html/page.html"}, "http://127.0.0.1:5500/kr/project/html/page.html")
         self.project = self.store.save_project({"name": "소스 검증", "url": "http://127.0.0.1:5500/kr/project/html/page.html", "source": self.config})
@@ -30,7 +30,7 @@ class SourceTests(unittest.TestCase):
         self.assertEqual(self.config["url_prefix"], "http://127.0.0.1:5500/kr/project/")
 
     def test_html_exact_id_and_css_rule_link(self):
-        css = (self.files / "css/style.css").read_text()
+        css = (self.files / "css/style.css").read_text(encoding="utf-8")
         inspection = {"selector": "#hero", "element": {"id": "hero", "tag": "section"}, "rules": [{
             "url": "http://127.0.0.1:5500/kr/project/css/style.css", "inline": False, "line": 1,
             "sheetHash": hashlib.sha256(css.encode()).hexdigest(), "selector": "#hero", "inherited": False}]}
@@ -57,7 +57,7 @@ class SourceTests(unittest.TestCase):
 
     def test_inline_stylesheet_location_is_verified(self):
         text = '<html>\n<head>\n<style>\n#hero { padding: 10px; }\n</style>\n</head>\n<body><section id="hero"></section></body>\n</html>'
-        (self.files / "html/page.html").write_text(text)
+        (self.files / "html/page.html").write_text(text, encoding="utf-8")
         sheet = '\n#hero { padding: 10px; }\n'
         result = self.sources.resolve(self.project["id"], {"selector": "#hero", "element": {"id": "hero", "tag": "section"}, "rules": [{
             "url": "http://127.0.0.1:5500/kr/project/html/page.html", "inline": True, "line": 2,
@@ -66,8 +66,8 @@ class SourceTests(unittest.TestCase):
         self.assertEqual(result["links"][1]["line"], 4)
 
     def test_outside_root_and_non_source_files_are_rejected(self):
-        (self.root / "outside.html").write_text('outside')
-        (self.files / "secret.json").write_text('{}')
+        (self.root / "outside.html").write_text('outside', encoding="utf-8")
+        (self.files / "secret.json").write_text('{}', encoding="utf-8")
         (self.files / "linked.html").symlink_to(self.root / "outside.html")
         for path in ("../outside.html", "secret.json", "linked.html"):
             with self.assertRaises(ValueError):
@@ -81,7 +81,7 @@ class SourceTests(unittest.TestCase):
         doc = self.sources.read(self.project["id"], "html/page.html", 7)
         saved = self.sources.save(self.project["id"], doc["path"], doc["sha256"], doc["content"].replace('검수 제목', '수정한 제목'))
         self.assertTrue(saved["changed"])
-        self.assertIn('수정한 제목', (self.files / "html/page.html").read_text())
+        self.assertIn('수정한 제목', (self.files / "html/page.html").read_text(encoding="utf-8"))
         reopened = Sources(Store(self.root / "data")).read(self.project["id"], doc["path"])
         self.assertEqual(reopened["backup_id"], saved["backup_id"])
         restored = self.sources.restore(self.project["id"], saved["backup_id"], saved["sha256"])
@@ -90,20 +90,21 @@ class SourceTests(unittest.TestCase):
 
     def test_concurrent_external_change_is_not_overwritten(self):
         doc = self.sources.read(self.project["id"], "html/page.html")
-        (self.files / "html/page.html").write_text('외부 편집기에서 변경')
+        (self.files / "html/page.html").write_text('외부 편집기에서 변경', encoding="utf-8")
         with self.assertRaises(ValueError):
             self.sources.save(self.project["id"], doc["path"], doc["sha256"], '앱 변경')
-        self.assertEqual((self.files / "html/page.html").read_text(), '외부 편집기에서 변경')
+        self.assertEqual((self.files / "html/page.html").read_text(encoding="utf-8"), '외부 편집기에서 변경')
 
     def test_preserves_bom_newline_and_permissions(self):
         path = self.files / "css/style.css"
         path.write_bytes(b'\xef\xbb\xbf#hero {\r\n    padding: 20px;\r\n}\r\n')
         path.chmod(0o640)
+        original_mode = path.stat().st_mode & 0o777
         doc = self.sources.read(self.project["id"], "css/style.css")
         self.sources.save(self.project["id"], doc["path"], doc["sha256"], doc["content"].replace('20px','24px'))
         self.assertTrue(path.read_bytes().startswith(b'\xef\xbb\xbf'))
         self.assertIn(b'24px;\r\n', path.read_bytes())
-        self.assertEqual(path.stat().st_mode & 0o777, 0o640)
+        self.assertEqual(path.stat().st_mode & 0o777, original_mode)
 
     def test_noop_save_does_not_create_backup(self):
         doc = self.sources.read(self.project["id"], "html/page.html")
@@ -124,7 +125,7 @@ class SourceTests(unittest.TestCase):
         saved = self.sources.save(self.project["id"], doc["path"], doc["sha256"], doc["content"].replace('검수 제목','수정한 제목'))
         other = self.root / "other"
         (other / "html").mkdir(parents=True)
-        (other / "html/page.html").write_text(saved["content"])
+        (other / "html/page.html").write_text(saved["content"], encoding="utf-8")
         project = self.store.project(self.project["id"])
         project["source"]["root"] = str(other)
         self.store.save_project(project)
