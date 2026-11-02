@@ -11,7 +11,8 @@
         <script src="sidepanel.js" type="module"></script>
     </head>
     <body>
-        <main id="tools" hidden></main>
+        <main id="tools" hidden>
+        </main>
         <main id="connection">
             <h1>
                 시안 검수
@@ -20,14 +21,16 @@
                 실제 페이지를 가리지 않는 전용 도구입니다.
             </p>
             <label for="import">
-                검수 파일 불러오기
+                PC·MO 통합 검수 파일 불러오기
             </label>
             <input id="import" type="file" accept=".json,application/json">
             <label for="reviews">
-                불러온 검수 파일
+                불러온 검수 묶음
             </label>
-            <select id="reviews"></select>
-            <p id="review-info" class="muted"></p>
+            <select id="reviews">
+            </select>
+            <p id="review-info" class="muted">
+            </p>
             <button id="connect" type="button" disabled>
                 현재 페이지에 연결
             </button>
@@ -37,7 +40,19 @@
             <button id="back" type="button" hidden>
                 검수 도구로 돌아가기
             </button>
-            <p id="message" role="status"></p>
+            <p id="message" role="status">
+            </p>
+            <p id="extension-info" class="muted">
+            </p>
+            <button id="reload-extension" type="button" hidden>
+                Chrome 확장 관리 열기
+            </button>
+            <button id="open-sidepanel" type="button">
+                사이드패널 열기
+            </button>
+            <button id="delete-review" type="button" disabled>
+                불러온 검수 묶음 제거
+            </button>
             <p class="muted">
                 패널을 닫거나 다시 열려면 Chrome의 확장 도구 아이콘을 누르세요.
                 요소 선택과 저장에는 실제 페이지의 개발자도구가 열려 있어야 합니다.

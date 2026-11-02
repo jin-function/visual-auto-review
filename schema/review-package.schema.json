@@ -1,0 +1,120 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "VisualQA Chrome review bundle",
+    "type": "object",
+    "required": [
+        "format",
+        "version",
+        "packageId",
+        "coordinateSpace",
+        "runId",
+        "url",
+        "responsive",
+        "targets"
+    ],
+    "properties": {
+        "format": {
+            "const": "visualqa.chrome-review"
+        },
+        "version": {
+            "const": 3
+        },
+        "packageId": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+        },
+        "coordinateSpace": {
+            "const": "reference-display-css-pixels-v1"
+        },
+        "runId": {
+            "type": "string",
+            "minLength": 1
+        },
+        "url": {
+            "type": "string",
+            "format": "uri"
+        },
+        "responsive": {
+            "type": "object",
+            "required": [
+                "breakpoint"
+            ],
+            "properties": {
+                "breakpoint": {
+                    "type": "integer",
+                    "minimum": 320,
+                    "maximum": 4096
+                }
+            }
+        },
+        "targets": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 2,
+            "items": {
+                "type": "object",
+                "required": [
+                    "device",
+                    "targetId",
+                    "revisionId",
+                    "runId",
+                    "url",
+                    "imageRole",
+                    "viewportWidth",
+                    "placement",
+                    "display",
+                    "image",
+                    "findings"
+                ],
+                "properties": {
+                    "device": {
+                        "enum": [
+                            "pc",
+                            "mo"
+                        ]
+                    },
+                    "imageRole": {
+                        "const": "reference-original"
+                    },
+                    "findings": {
+                        "type": "array",
+                        "maxItems": 5000
+                    },
+                    "image": {
+                        "type": "object",
+                        "required": [
+                            "mime",
+                            "width",
+                            "height",
+                            "sha256",
+                            "base64"
+                        ],
+                        "properties": {
+                            "mime": {
+                                "const": "image/png"
+                            },
+                            "sha256": {
+                                "type": "string",
+                                "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "base64": {
+                                "type": "string",
+                                "maxLength": 111848108
+                            },
+                            "width": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 32768
+                            },
+                            "height": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 150000
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

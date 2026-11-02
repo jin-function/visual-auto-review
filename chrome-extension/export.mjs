@@ -1,48 +1,12 @@
-import {safeFilename, samePage} from './core.mjs';
+import {safeFilename} from './core.mjs';
 import {rebaseCSS, rebaseSrcset} from './css.mjs';
-import {snapshotPage} from './snapshot.mjs';
 import {zipFiles} from './zip.mjs';
 import {stripTooling} from './sanitize.mjs';
 import {originalFilename, stylesheetPaths, relativePath} from './export-paths.mjs';
 import {mergeStylesheet} from './css-source.mjs';
 
-export function evaluate(expression) {
-    return new Promise((resolve, reject) => chrome.devtools.inspectedWindow.eval(expression, (value, error) => {
-        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
-        else if (error) reject(new Error(error.description || error.value || '페이지 정보를 읽지 못했습니다.'));
-        else resolve(value);
-    }));
-}
-function resources() {
-    return new Promise(resolve => chrome.devtools.inspectedWindow.getResources(resolve));
-}
-function networkStyles() {
-    return new Promise(resolve => chrome.devtools.network.getHAR(har => resolve(new Set(
-        (har?.entries || []).filter(entry => /^text\/css\b/i.test(entry.response?.content?.mimeType || '')).map(entry => entry.request.url)))));
-}
-function resourceContent(resource) {
-    return new Promise(resolve => resource.getContent((content, encoding) => {
-        const error = chrome.runtime.lastError;
-        resolve(error || encoding ? null : content);
-    }));
-}
-export async function collectExport() {
-    if (!Number.isInteger(chrome.devtools?.inspectedWindow?.tabId)) throw new Error('Chrome 개발자도구의 시안 검수 탭에서 내보내세요.');
-    const options = {extensionOrigin: chrome.runtime.getURL('')};
-    const snapshot = await evaluate(`(${snapshotPage.toString()})(${JSON.stringify(options)}, ${stripTooling.toString()})`);
-    const known = new Set(snapshot.sheets.map(sheet => sheet.url));
-    const network = await networkStyles();
-    const excluded = new Set(snapshot.excludedStyles);
-    const list = (await resources()).filter(resource => !excluded.has(resource.url) && (known.has(resource.url) || network.has(resource.url) || /\.css(?:[?#]|$)/i.test(resource.url)));
-    const contents = new Map();
-    // Bound simultaneous requests for pages with many stylesheets.
-    for (let start = 0; start < list.length; start += 8) {
-        await Promise.all(list.slice(start, start + 8).map(async resource => contents.set(resource.url, await resourceContent(resource))));
-    }
-    const current = await evaluate('location.href');
-    if (!samePage(current, snapshot.url)) throw new Error('페이지가 이동했습니다. 현재 페이지에서 다시 내보내세요.');
-    return {snapshot, contents};
-}
+export {evaluate, collectExport} from './export-collector.mjs';
+
 function compactCSS(text, removeWhitespace = true) {
     let result = '', quote = '';
     for (let index = 0; index < text.length; index++) {
@@ -127,7 +91,8 @@ export function buildExport(snapshot, contents, review, settings) {
     documentCopy.querySelectorAll('meta[http-equiv="content-type" i]').forEach(meta => meta.setAttribute('content', 'text/html; charset=utf-8'));
     files.unshift({name: htmlPath, content: snapshot.doctype + '\n' + documentCopy.documentElement.outerHTML + '\n'});
     const manifest = {format: 'visualqa.edited-page', version: 2, exportedAt: new Date().toISOString(), url: snapshot.url,
-        html: htmlPath, stylesheets: records, review: review ? {name: review.name, runId: review.runId, revisionId: review.revisionId} : null,
+        html: htmlPath, stylesheets: records, review: review ? {name: review.name, packageId: review.packageId || null, runId: review.runId, targetId: review.targetId || null, device: review.device || null, revisionId: review.revisionId, appVersion: review.appVersion || null} : null,
+        extensionVersion: chrome.runtime.getManifest().version,
         overlay: settings || null, warnings: [...new Set(warnings)],
         notes: ['HTML은 현재 DOM 사본입니다. 원본 소스 파일과 구조·서식이 다를 수 있습니다.',
             'CSS는 개발자도구의 수정된 소스 텍스트를 사용해 기존 주석·들여쓰기·줄바꿈을 보존합니다. URL 값은 저장 위치에 맞춥니다.',

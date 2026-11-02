@@ -5,12 +5,23 @@
     // A reloaded extension loses its old isolated context, but its DOM can remain on the page.
     for (const stale of document.querySelectorAll('visualqa-overlay[data-visualqa-extension="overlay"]')) stale.remove();
     let host, canvas, context, bitmap, transfer, meta, settings, selected, frame = 0, devtoolsReady = false;
-    let destroyed = false, resizeTimer, generation = 0;
+    let destroyed = false, resizeTimer, generation = 0, paintedReviewId = null, notified = '';
+    const cache = new Map();
+    function notify() {
+        const value = status();
+        const signature = JSON.stringify([value.imageState, value.reviewId, value.viewportWidth, value.settings]);
+        if (signature === notified) return;
+        notified = signature;
+        chrome.runtime.sendMessage({type: 'rendered'}).catch(() => {});
+    }
     function device() { return innerWidth < (meta?.breakpoint || 1024) ? 'mo' : 'pc'; }
     function active() { return !!bitmap && !!host?.isConnected && meta?.device === device(); }
     function geometry() { return meta && VisualQALayout.geometry(innerWidth, innerHeight, meta, settings, scrollX, scrollY); }
     function status() {
-        return {version, connected: !!meta && !!host?.isConnected, imageVisible: active() && settings.visible, viewportWidth: innerWidth, viewportHeight: innerHeight,
+        const layout = geometry();
+        const outside = layout && (layout.imageScreenX >= innerWidth || layout.imageScreenX + layout.imageWidth <= 0 || layout.y >= innerHeight || layout.y + layout.imageHeight <= 0);
+        const imageState = transfer || (!!meta && meta.device !== device()) ? 'loading' : !active() ? 'missing' : !settings.visible || settings.opacity === 0 ? 'hidden' : outside ? 'outside' : paintedReviewId === meta.reviewId ? 'ready' : 'loading';
+        return {version, imageState, cachedReviewIds: [...cache.keys()], connected: !!meta && !!host?.isConnected, imageVisible: imageState === 'ready', viewportWidth: innerWidth, viewportHeight: innerHeight,
             scrollX, scrollY, settings, devtoolsReady, imageRole: meta?.imageRole, reviewId: active() ? meta.reviewId : null,
             device: device(), missingVariant: !!meta && !bitmap && meta.device === device(), switching: !!transfer || (!!meta && meta.device !== device()), geometry: geometry(),
             url: location.href, widthMismatch: !!meta && innerWidth !== meta.viewportWidth};
@@ -29,15 +40,17 @@
         if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
         context.setTransform(ratio, 0, 0, ratio, 0, 0);
         context.clearRect(0, 0, layout.canvasWidth, innerHeight);
-        if (!active() || !settings.visible) return;
+        paintedReviewId = null;
+        if (!active() || !settings.visible || !settings.opacity) { notify(); return; }
         context.globalAlpha = settings.opacity;
         context.drawImage(bitmap, layout.x, layout.y, layout.imageWidth, layout.imageHeight);
         context.globalAlpha = 1;
         if (selected) {
             context.strokeStyle = '#0084ff'; context.lineWidth = 2;
-            context.strokeRect(layout.x + selected.x * settings.scale, layout.y + selected.y * settings.scale,
-                selected.width * settings.scale, selected.height * settings.scale);
+            const rect = VisualQALayout.findingRect(selected, layout, settings.scale);
+            context.strokeRect(rect.x, rect.y, rect.width, rect.height);
         }
+        paintedReviewId = meta.reviewId; notify();
     }
     function schedule() { if (!frame && !destroyed) frame = requestAnimationFrame(paint); }
     function mount() {
@@ -56,7 +69,7 @@
     }
     function remove() {
         generation++;
-        bitmap?.close(); bitmap = null; transfer = null; selected = null; meta = null;
+        bitmap?.close(); bitmap = null; transfer = null; selected = null; meta = null; paintedReviewId = null;
         host?.remove(); host = null; canvas = null;
         if (frame) cancelAnimationFrame(frame); frame = 0;
     }
@@ -72,6 +85,7 @@
         if (message.type === 'status') return status();
         if (message.type === 'begin') {
             transfer = {id: message.transferId, meta: message.meta, generation: ++generation, chunks: [], size: 0};
+            notify();
             return {ready: true};
         }
         if (message.type === 'chunk') {
@@ -81,15 +95,24 @@
             transfer.chunks.push(message.data);
             return {received: message.index};
         }
-        if (message.type === 'finish') {
+        if (message.type === 'finish' || message.type === 'reuse') {
+            if (message.type === 'reuse') {
+                if (!cache.has(message.meta.reviewId)) throw new Error('시안 캐시를 다시 연결하세요.');
+                transfer = {id: message.transferId, meta: message.meta, generation: ++generation};
+            }
             if (!transfer || transfer.id !== message.transferId) throw new Error('이미지를 다시 연결하세요.');
-            const pending = transfer; transfer = null;
-            const bytes = Uint8Array.from(atob(pending.chunks.join('')), character => character.charCodeAt(0));
-            const next = await createImageBitmap(new Blob([bytes], {type: 'image/png'}));
+            const pending = transfer;
+            const blob = message.type === 'reuse' ? cache.get(pending.meta.reviewId) : new Blob([Uint8Array.from(atob(pending.chunks.join('')), character => character.charCodeAt(0))], {type: 'image/png'});
+            const next = await createImageBitmap(blob);
             if (next.width !== pending.meta.width || next.height !== pending.meta.height) { next.close(); throw new Error('이미지 크기가 다릅니다.'); }
             if (destroyed || pending.generation !== generation || pending.meta.device !== (innerWidth < pending.meta.breakpoint ? 'mo' : 'pc')) {
-                next.close(); return {stale: true};
+                next.close(); if (transfer === pending) transfer = null; return {stale: true};
             }
+            if (meta?.packageId && meta.packageId !== pending.meta.packageId) cache.clear();
+            cache.delete(pending.meta.reviewId); cache.set(pending.meta.reviewId, blob);
+            let bytes = [...cache.values()].reduce((sum, item) => sum + item.size, 0);
+            for (const [id, value] of cache) { if (bytes <= 32 * 1024 * 1024) break; cache.delete(id); bytes -= value.size; }
+            transfer = null; paintedReviewId = null;
             bitmap?.close(); bitmap = next; meta = pending.meta; settings = {...meta.settings}; selected = null;
             devtoolsReady = meta.devtoolsReady === true;
             mount(); schedule(); return status();
@@ -106,8 +129,7 @@
             if (!active()) throw new Error('현재 화면에 맞는 시안을 먼저 연결하세요.');
             selected = message.rect;
             const layout = geometry();
-            scrollTo({left: Math.max(0, scrollX + layout.imageScreenX + selected.x * settings.scale - innerWidth / 4),
-                top: Math.max(0, meta.placement.y + settings.dy + selected.y * settings.scale - innerHeight / 3), behavior: 'instant'});
+            scrollTo({...VisualQALayout.jumpPosition(selected, layout, meta, settings, innerWidth, innerHeight, scrollX), behavior: 'instant'});
             schedule(); return status();
         }
         if (message.type === 'remove') { remove(); return {removed: true}; }
@@ -116,7 +138,7 @@
     }
     const listener = (message, sender, respond) => {
         if (sender.id !== chrome.runtime.id) return false;
-        receive(message).then(respond).catch(error => respond({error: error.message}));
+        receive(message).then(respond).catch(error => { transfer = null; schedule(); respond({error: error.message}); });
         return true;
     };
     addEventListener('scroll', schedule, {passive: true});
@@ -124,7 +146,7 @@
     globalThis.visualViewport?.addEventListener('resize', viewportChanged, {passive: true});
     chrome.runtime.onMessage.addListener(listener);
     globalThis.__visualQAOverlay = {version, destroy() {
-        destroyed = true; clearTimeout(resizeTimer); remove();
+        destroyed = true; clearTimeout(resizeTimer); remove(); cache.clear();
         removeEventListener('scroll', schedule); removeEventListener('resize', viewportChanged);
         globalThis.visualViewport?.removeEventListener('resize', viewportChanged);
         chrome.runtime.onMessage.removeListener(listener);

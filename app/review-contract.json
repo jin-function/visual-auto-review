@@ -1,0 +1,12 @@
+{
+    "format": "visualqa.chrome-review",
+    "version": 3,
+    "legacyVersion": 2,
+    "coordinateSpace": "reference-display-css-pixels-v1",
+    "defaultBreakpoint": 1024,
+    "maxImageBytes": 83886080,
+    "maxImagePixels": 100000000,
+    "maxFindings": 5000,
+    "maxTargets": 2,
+    "devices": ["pc", "mo"]
+}

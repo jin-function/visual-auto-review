@@ -7,6 +7,8 @@
             시안 검수
         </title>
         <link rel="stylesheet" href="/style.css">
+        <script src="/request_state.js" defer>
+        </script>
         <script src="/app.js" defer>
         </script>
         <script src="/source_editor.js" defer>
@@ -36,7 +38,7 @@
                 </nav>
                 <div class="sidebar-footer">
                     <span class="dot"></span>
-                    <span>로컬 저장 · v3.1</span>
+                    <span id="app-version">로컬 저장</span>
                 </div>
             </aside>
             <main>
@@ -116,7 +118,7 @@
                                     HTML 열기
                                 </button>
                                 <button id="chrome-review" type="button">
-                                    Chrome용 검수 파일
+                                    PC·MO 통합 검수 파일
                                 </button>
                             </div>
                             <div class="actions">
@@ -355,6 +357,20 @@
                     검수할 페이지 주소
                     <input id="project-url-input" type="text" placeholder="http://127.0.0.1:5500/..." required>
                 </label>
+                <label for="breakpoint-input">
+                    PC 전환 폭 (px)
+                </label>
+                <input id="breakpoint-input" type="number" min="320" max="4096" value="1024" required>
+                <label for="pc-overlay-target">
+                    PC 오버레이에 사용할 검수 대상
+                </label>
+                <select id="pc-overlay-target">
+                </select>
+                <label for="mo-overlay-target">
+                    MO 오버레이에 사용할 검수 대상
+                </label>
+                <select id="mo-overlay-target">
+                </select>
                 <details id="source-connection" class="settings-details">
                     <summary>
                         편집할 소스 연결

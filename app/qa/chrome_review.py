@@ -8,6 +8,9 @@ import json
 from urllib.parse import urlparse
 
 from .storage import Store
+from .contract import CONTRACT, responsive_config, target_device
+from . import VERSION
+from .coordinates import reference_placement, reference_rect
 
 
 def chrome_review(store: Store, run_id: str, target_id: str, revision_id: str | None = None) -> dict:
@@ -24,25 +27,55 @@ def chrome_review(store: Store, run_id: str, target_id: str, revision_id: str | 
         image = store.asset_path(asset["id"]).read_bytes()
         if len(image) > 80 * 1024 * 1024:
             raise ValueError("Chrome용 시안 원본은 80MB 이하여야 합니다. 시안을 나눠 주세요.")
-        clip = capture.get("clip", {})
         target = run["targets"][target_id]
         return {
             "format": "visualqa.chrome-review", "version": 2, "imageRole": "reference-original",
             "name": f"{run['project']['name']} · {target['name']}",
             "url": url, "runId": run_id, "targetId": target_id, "revisionId": result["id"],
-            "device": "mo" if target_id.lower() in {"mobile", "mo"} else "pc" if target_id.lower() in {"pc", "desktop"} else None,
+            "device": target_device(next(t for t in run["project"]["targets"] if t["id"] == target_id)),
             "viewportWidth": capture.get("innerWidth") or metrics["width"],
-            "placement": {"x": clip.get("x", 0), "y": clip.get("y", 0) + metrics["reference_top"] - metrics["actual_top"]},
+            "placement": reference_placement(capture, metrics),
             "display": {"width": metrics["width"], "height": metrics["reference_height"]},
             "image": {"mime": "image/png", "width": asset["width"], "height": asset["height"],
                       "sha256": hashlib.sha256(image).hexdigest(), "base64": base64.b64encode(image).decode("ascii")},
             "findings": [{"id": finding["id"], "title": finding["title"],
-                          "rect": {**finding["rect"], "y": finding["rect"]["y"] - metrics["reference_top"]},
-                          "selectors": [item["selector"] for item in finding["elements"]]}
+                          "rect": reference_rect(finding["rect"], metrics),
+                          "selectors": [item["selector"] for item in finding["elements"]],
+                          "review": result.get("reviews", {}).get(finding["id"]),
+                          "kind": finding["kind"], "suggestedSeverity": finding["suggested_severity"]}
                          for finding in result["findings"]],
         }
 
 
-def encoded_review(store: Store, run_id: str, target_id: str, revision_id: str | None = None) -> bytes:
-    return json.dumps(chrome_review(store, run_id, target_id, revision_id), ensure_ascii=False,
+def chrome_bundle(store: Store, run_id: str, target_id: str | None = None, revision_id: str | None = None) -> dict:
+    """One immutable revision selection per device; never mix different runs."""
+    with store.lock:
+        run = store.run(run_id)
+        responsive = responsive_config(run["project"])
+        targets, unavailable = [], []
+        for device in CONTRACT["devices"]:
+            selected = responsive[device]
+            target = run["targets"].get(selected)
+            if not target or not target.get("current_revision"):
+                unavailable.append({"device": device, "reason": "검수 결과가 없습니다."})
+                continue
+            chosen_revision = revision_id if selected == target_id else target["current_revision"]
+            review = chrome_review(store, run_id, selected, chosen_revision)
+            if review["image"]["width"] * review["image"]["height"] > CONTRACT["maxImagePixels"]:
+                raise ValueError("시안은 1억 픽셀 이하여야 합니다.")
+            if len(review["findings"]) > CONTRACT["maxFindings"]:
+                raise ValueError("차이 항목이 너무 많습니다. 캡처 범위를 나누세요.")
+            targets.append(review)
+        if not targets:
+            raise ValueError("완료된 PC 또는 MO 검수 결과가 필요합니다.")
+        identity = [(t["targetId"], t["revisionId"], t["image"]["sha256"]) for t in targets]
+        package_id = hashlib.sha256(json.dumps([run_id, responsive, identity], sort_keys=True).encode()).hexdigest()
+        return {"format": CONTRACT["format"], "version": CONTRACT["version"], "packageId": package_id,
+                "coordinateSpace": CONTRACT["coordinateSpace"], "producer": {"appVersion": VERSION},
+                "name": run["project"]["name"], "url": targets[0]["url"], "runId": run_id,
+                "responsive": {"breakpoint": responsive["breakpoint"]}, "targets": targets, "unavailable": unavailable}
+
+
+def encoded_review(store: Store, run_id: str, target_id: str | None = None, revision_id: str | None = None) -> bytes:
+    return json.dumps(chrome_bundle(store, run_id, target_id, revision_id), ensure_ascii=False,
                       allow_nan=False, separators=(",", ":")).encode("utf-8")

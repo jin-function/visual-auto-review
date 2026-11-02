@@ -44,7 +44,7 @@
         [hidden] { display: none !important; }
         :focus-visible { outline: 2px solid #4166e0; outline-offset: 2px; }
     `;
-    function create(meta, settings, invoke) {
+    function create(meta, settings, invoke, restored = {}) {
         const host = document.createElement('visualqa-tools');
         host.setAttribute('data-visualqa-extension', 'tools');
         host.style.cssText = 'display:block;height:100%;';
@@ -65,12 +65,15 @@
         const differences = node('section', undefined, body, {role: 'tabpanel', id: 'findings-panel', 'aria-labelledby': 'findings-tab', hidden: ''});
         node('p', '화면 폭에 따라 PC·MO 시안 하나만 표시합니다.', options, {class: 'muted'});
         const variantControls = {};
+        const registration = node('p', '', options, {class: 'muted', 'data-tool': 'registration'});
+        const imageState = node('p', '', body, {class: 'status', 'data-tool': 'image-status', role: 'status'});
         for (const device of ['pc', 'mo']) {
             const label = node('label', `${device.toUpperCase()} 시안`, options);
             const select = node('select', undefined, label, {'data-tool': `variant-${device}`});
             node('option', '미등록 · 이 화면에서는 오버레이 숨김', select, {value: ''});
             for (const review of meta.availableReviews) node('option', `${review.name} · ${review.viewportWidth}px`, select, {value: review.id});
             variantControls[device] = select;
+            label.hidden = !meta.legacy;
         }
         const breakpointLabel = node('label', 'PC 전환 폭 (px) · 이 값 이상이면 PC', options);
         const breakpoint = node('input', undefined, breakpointLabel, {type: 'number', min: '320', max: '4096', step: '1', 'data-tool': 'breakpoint'});
@@ -94,12 +97,20 @@
         const rendererVersion = node('p', '', options, {class: 'muted', 'data-tool': 'renderer-version'});
         const mismatch = node('p', '', body, {class: 'muted warning', hidden: ''});
         node('p', `차이 항목 ${meta.findings.length}개`, differences, {class: 'name'});
+        const filterLabel = node('label', '검수 상태', differences);
+        const filter = node('select', undefined, filterLabel, {'data-tool': 'finding-filter'});
+        const reviewLabels = {pending: '확인 필요', fix: '수정 필요', intentional: '의도된 차이', resolved: '해결'};
+        node('option', '전체', filter, {value: 'all'});
+        for (const [value, label] of Object.entries(reviewLabels)) node('option', label, filter, {value});
+        filter.value = restored.filter || 'all';
         const findings = node('ul', undefined, differences, {class: 'finding-list', 'data-tool': 'findings', 'aria-label': '차이 항목 목록'});
         let selectedIndex = meta.findings.length ? 0 : -1;
         const findingButtons = meta.findings.map((finding, index) => {
             const item = node('li', undefined, findings);
             const button = node('button', undefined, item, {type: 'button', class: 'finding-item', 'data-finding-id': finding.id, 'aria-pressed': String(index === selectedIndex)});
             node('strong', `${index + 1}. ${finding.title}`, button);
+            node('span', `${reviewLabels[finding.review?.status || 'pending']} · 심각도 ${finding.review?.severity || finding.suggestedSeverity || 'medium'}`, button);
+            if (finding.review?.note) node('span', finding.review.note, button);
             node('span', `Y ${Math.round(finding.rect.y)}px · ${Math.round(finding.rect.width)} × ${Math.round(finding.rect.height)}px · 관련 요소 ${finding.selectors.length}개`, button);
             button.addEventListener('click', () => chooseFinding(index, true));
             return button;
@@ -144,6 +155,12 @@
             previous.disabled = next.disabled = jump.disabled = !finding;
             updateReady();
         }
+        function applyFilter() {
+            for (const [index, button] of findingButtons.entries()) button.parentElement.hidden = filter.value !== 'all' && (meta.findings[index].review?.status || 'pending') !== filter.value;
+            if (selectedIndex < 0 || findingButtons[selectedIndex]?.parentElement.hidden) selectedIndex = findingButtons.findIndex(button => !button.parentElement.hidden);
+            selectFinding();
+        }
+        filter.addEventListener('change', applyFilter);
         function chooseFinding(index, move) {
             selectedIndex = index; selectFinding();
             findingButtons[index]?.scrollIntoView({block: 'nearest'});
@@ -189,7 +206,8 @@
         jump.addEventListener('click', () => action('jump', {findingId: meta.findings[selectedIndex]?.id}, jump));
         for (const [button, direction] of [[previous, -1], [next, 1]]) button.addEventListener('click', () => {
             if (!meta.findings.length) return;
-            chooseFinding((selectedIndex + direction + meta.findings.length) % meta.findings.length, true);
+            const available = findingButtons.map((button, index) => button.parentElement.hidden ? -1 : index).filter(index => index >= 0);
+            if (available.length) chooseFinding(available[(available.indexOf(selectedIndex) + direction + available.length) % available.length], true);
         });
         inspect.addEventListener('click', async () => {
             const result = await action('inspect-request', {findingId: meta.findings[selectedIndex]?.id, selectorIndex: Number(selectors.value)}, inspect);
@@ -213,6 +231,9 @@
                 opacityText.textContent = ` ${Math.round(current.opacity * 100)}%`;
                 saveAs.checked = current.saveAs;
             }
+            registration.textContent = ['pc', 'mo'].map(device => `${device.toUpperCase()}: ${meta.availableVariants?.[device] || '미등록'}`).join('\n');
+            imageState.textContent = state.error || ({loading: '시안을 불러오고 있습니다.', missing: `${state.device.toUpperCase()} 시안이 없습니다. 검수 앱에서 통합 파일을 다시 저장하세요.`, hidden: '시안 표시가 꺼져 있거나 불투명도가 0%입니다.', outside: '시안이 현재 화면 범위 밖에 있습니다. 위치를 초기화하거나 차이 위치로 이동하세요.', ready: `${state.device.toUpperCase()} 시안 표시 중 · ${meta.name}`}[state.imageState] || '표시 상태를 확인하고 있습니다.');
+            imageState.classList.toggle('warning', !!state.error || ['missing', 'outside'].includes(state.imageState));
             if (!variantsDirty && state.binding) {
                 breakpoint.value = state.binding.breakpoint;
                 for (const device of ['pc', 'mo']) variantControls[device].value = state.binding.variants[device] || '';
@@ -227,8 +248,9 @@
             rendererVersion.classList.toggle('warning', !currentRenderer);
             ready = state.devtoolsReady && !state.switching && currentRenderer; updateReady();
         }
-        document.getElementById('tools').append(host); selectFinding();
-        return {update, destroy() { destroyed = true; clearTimeout(timer); host.remove(); }};
+        document.getElementById('tools').append(host); applyFilter();
+        if (restored.tab === 'findings') selectTab(findingsTab);
+        return {update, viewState() { return {filter: filter.value, tab: findingsTab.getAttribute('aria-selected') === 'true' ? 'findings' : 'options'}; }, destroy() { destroyed = true; clearTimeout(timer); host.remove(); }};
     }
     globalThis.VisualQAToolbar = {create};
 })();

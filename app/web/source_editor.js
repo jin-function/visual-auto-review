@@ -85,14 +85,16 @@
     function syncNumbers() {field('source-line-numbers').scrollTop=field('source-code').scrollTop;}
     async function save(rerun=false) {
         if(!editor.doc||editor.busy)return;editor.busy=true;buttons();
+        const generation=editor.generation;
         try{
             const result=await api('/api/source/save',{project_id:editor.project,path:editor.doc.path,sha256:editor.doc.sha256,connection_id:editor.doc.connection_id,content:field('source-code').value});
+            if(generation!==editor.generation)return;
             editor.doc=result;editor.dirty=false;
             status(result.changed?'원본을 백업하고 저장했습니다. 현재 캡처는 수정 전 결과이므로 재검수로 확인하세요.':'저장할 변경이 없습니다.');
             toast(result.changed?'원본 백업과 저장을 완료했습니다.':'변경 내용이 없습니다.');
             if(rerun){editor.busy=false;await startRun();}
         }catch(error){status(error.message,true);toast(error.message);}
-        finally{editor.busy=false;buttons();}
+        finally{if(generation===editor.generation){editor.busy=false;buttons();}}
     }
     field('source-code').addEventListener('input',()=>{editor.dirty=field('source-code').value!==editor.doc?.content;lineNumbers();buttons();});
     field('source-code').addEventListener('scroll',syncNumbers);

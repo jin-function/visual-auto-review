@@ -85,7 +85,7 @@ async function main() {
         return result.result.value;
     }
     await send('Page.enable'); await send('Runtime.enable'); await send('Network.enable');
-    await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width <= 600, screenWidth: width, screenHeight: height });
+    await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: profile.emulateMobile ?? width <= 600, screenWidth: width, screenHeight: height });
     const browser = await send('Browser.getVersion');
     const navigation = await send('Page.navigate', { url });
     if (navigation.errorText) throw new Error(`페이지 이동 실패: ${navigation.errorText}`);

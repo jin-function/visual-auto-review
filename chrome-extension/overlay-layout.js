@@ -9,5 +9,13 @@
             imageScreenX: canvasLeft + x, imageScreenY: y,
             imageWidth: meta.display.width * settings.scale, imageHeight: meta.display.height * settings.scale};
     }
-    globalThis.VisualQALayout = {geometry};
+    function findingRect(rect, layout, scale) {
+        return {x: layout.x + rect.x * scale, y: layout.y + rect.y * scale,
+            width: rect.width * scale, height: rect.height * scale};
+    }
+    function jumpPosition(rect, layout, meta, settings, viewportWidth, viewportHeight, scrollX) {
+        return {left: Math.max(0, scrollX + layout.imageScreenX + rect.x * settings.scale - viewportWidth / 4),
+            top: Math.max(0, meta.placement.y + settings.dy + rect.y * settings.scale - viewportHeight / 3)};
+    }
+    globalThis.VisualQALayout = {geometry, findingRect, jumpPosition};
 })();

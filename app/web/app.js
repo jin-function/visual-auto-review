@@ -36,6 +36,7 @@ async function refresh(initial = false) {
     const value = await api('/api/state');
     Object.assign(state, {projects:value.projects, runs:value.runs, profile:value.profile});
     $('storage-label').textContent = `저장 위치: ${value.data_root}`;
+    $('app-version').textContent = `로컬 저장 · v${value.version}`;
     renderProjects();
     if (initial && state.projects.length) await selectProject(state.projects[0].id);
 }
@@ -48,6 +49,7 @@ function renderProjects() {
 async function selectProject(projectId) {
     if (window.SourceEditor && !SourceEditor.canLeave()) return;
     window.SourceEditor?.reset();
+    VisualQARequests.begin('run', 'result');
     state.project = projectId; state.run = null; state.result = null; state.target = null; state.finding = null;
     renderProjects();
     const project = currentProject();
@@ -65,7 +67,10 @@ async function selectProject(projectId) {
 async function selectRun(runId, targetId, revisionId) {
     if (window.SourceEditor && !SourceEditor.canLeave()) return;
     window.SourceEditor?.reset();
-    state.run = await api(`/api/run?id=${encodeURIComponent(runId)}`);
+    const current = VisualQARequests.begin('run', 'result'), projectId = state.project;
+    const run = await api(`/api/run?id=${encodeURIComponent(runId)}`);
+    if (!current() || state.project !== projectId) return;
+    state.run = run;
     state.target = targetId && state.run.targets[targetId] ? targetId : Object.keys(state.run.targets)[0];
     state.result = null; state.finding = null;
     $('welcome').hidden = true; $('workspace').hidden = false;
@@ -84,7 +89,7 @@ function renderRun() {
     $('target-tabs').replaceChildren(...Object.entries(run.targets).map(([id,target]) => {
         const button=element('button', `${target.name} · ${labels[target.status]}`, state.target === id ? 'active' : '');
         button.type='button'; button.setAttribute('role','tab'); button.setAttribute('aria-selected',String(state.target===id));
-        button.addEventListener('click',action(async()=>{state.target=id;state.result=null;state.finding=null;renderRun();await loadResult();})); return button;
+        button.addEventListener('click',action(async()=>{if(window.SourceEditor&&!SourceEditor.canLeave())return;VisualQARequests.begin('result');state.target=id;state.result=null;state.finding=null;renderRun();await loadResult();})); return button;
     }));
     const target = currentTarget();
     $('processing').hidden = target.status === 'complete' && !target.error;
@@ -102,9 +107,10 @@ async function loadResult(revisionId) {
     const target = currentTarget();
     if (!target?.current_revision) { $('result').hidden=true; return; }
     const id = revisionId || target.current_revision;
+    const current = VisualQARequests.begin('result');
     const requestedRun = state.run.id, requestedTarget = state.target;
     const result = await api(`/api/result?run=${requestedRun}&target=${requestedTarget}&revision=${id}`);
-    if (state.run.id !== requestedRun || state.target !== requestedTarget) return;
+    if (!current() || state.run?.id !== requestedRun || state.target !== requestedTarget) return;
     state.result=result; state.finding=null; $('result').hidden=false; $('revision-select').value=id;
     renderResult();
 }
@@ -123,6 +129,8 @@ function renderResult() {
     if(capture.diagnosticsTruncated)warnings.push('진단 요소가 많아 처음 3000개만 수집했습니다. 캡처 범위를 나누면 더 정확히 연결할 수 있습니다.');
     $('capture-warnings').hidden=!warnings.length;$('capture-warnings').textContent=warnings.join('\n');
     const h=result.history;
+    if(h.moved_candidates?.length)warnings.push(`위치가 바뀐 이전 차이 후보 ${h.moved_candidates.length}개가 있습니다. 이전 판단은 자동 적용하지 않았습니다.`);
+    $('capture-warnings').hidden=!warnings.length;$('capture-warnings').textContent=warnings.join('\n');
     $('history-summary').replaceChildren();
     if(h.previous_run){
         $('history-summary').append(element('span',h.compatible?`이전 비교 대비 신규 ${h.new.length}개 · 같은 위치 ${h.persisting.length}개 · 이번에 검출되지 않음 ${h.not_detected.length}개. `:'시안 또는 비교 조건이 변경되어 이전 판단을 자동으로 이어받지 않았습니다. '));
@@ -196,6 +204,8 @@ function editProject(project){
     state.edit=project?structuredClone(project):{name:'',url:'',targets:[{id:'mobile',name:'모바일',enabled:true,width:390,viewport_height:844,normalize:true},{id:'pc',name:'PC',enabled:false,width:1920,viewport_height:844,normalize:true}],settings:{pixel_threshold:24,font_tolerance:1,strip_height:600},profile:structuredClone(state.profile)};
     $('dialog-title').textContent=project?'프로젝트 설정':'새 프로젝트';$('project-name-input').value=state.edit.name;$('project-url-input').value=state.edit.url;
     $('threshold-input').value=state.edit.settings.pixel_threshold;$('tolerance-input').value=state.edit.settings.font_tolerance;$('strip-input').value=state.edit.settings.strip_height;$('profile-input').value=JSON.stringify(state.edit.profile,null,4);
+    state.edit.responsive ||= {breakpoint:1024};
+    $('breakpoint-input').value=state.edit.responsive.breakpoint;
     $('project-error').textContent='';renderTargetFields();$('project-dialog').showModal();
     $('source-root-input').value=state.edit.source?.root||'';
     $('source-html-input').value=state.edit.source?.html||'';
@@ -204,8 +214,12 @@ function editProject(project){
 function renderTargetFields(){
     $('target-fields').replaceChildren(...state.edit.targets.map(target=>{
         const box=element('div',undefined,'target-field'),heading=element('div',undefined,'target-heading'),check=element('label');
-        const enabled=element('input');enabled.type='checkbox';enabled.checked=target.enabled;enabled.setAttribute('aria-label',`${target.name} 검수 사용`);enabled.addEventListener('change',()=>{target.enabled=enabled.checked;});
+        const enabled=element('input');enabled.type='checkbox';enabled.checked=target.enabled;enabled.setAttribute('aria-label',`${target.name} 검수 사용`);enabled.addEventListener('change',()=>{target.enabled=enabled.checked;renderResponsiveFields();});
         const name=element('input');name.type='text';name.value=target.name;name.maxLength=80;name.setAttribute('aria-label','검수 대상 이름');name.addEventListener('input',()=>{target.name=name.value;});check.append(enabled,name);heading.append(check);box.append(heading);
+        target.device ||= /^(mobile|mo)$/.test(target.id)?'mo':/^(pc|desktop)$/.test(target.id)?'pc':target.width<1024?'mo':'pc';
+        const deviceLabel=element('label','검수 대상 종류'),device=element('select');
+        for(const [value,title] of [['pc','PC'],['mo','MO']]){const option=element('option',title);option.value=value;device.append(option);}
+        device.value=target.device;device.addEventListener('change',()=>{target.device=device.value;renderResponsiveFields();});deviceLabel.append(device);box.append(deviceLabel);
         const file=element('input',undefined,'asset-file');file.type='file';file.accept='image/png,image/jpeg';file.setAttribute('aria-label',`${target.name} 시안 파일`);
         const info=element('p',target.asset_name?`${target.asset_name} · ${target.asset_width} × ${target.asset_height}px`:'JPG 또는 PNG 시안을 선택하세요.','asset-label');
         file.addEventListener('change',action(async()=>{
@@ -223,7 +237,19 @@ function renderTargetFields(){
         for(const [key,title] of [['width','뷰포트 폭 (px)'],['viewport_height','뷰포트 높이 (px)']]){const label=element('label',title),input=element('input');input.type='number';input.value=target[key];input.min=key==='width'?'240':'320';input.max=key==='width'?'3840':'2160';input.required=true;input.addEventListener('input',()=>{target[key]=Number(input.value);});label.append(input);grid.append(label);}box.append(grid);
         const normal=element('label',undefined,'check'),toggle=element('input');toggle.type='checkbox';toggle.checked=target.normalize;toggle.addEventListener('change',()=>{target.normalize=toggle.checked;});normal.append(toggle,document.createTextNode('시안을 캡처 폭에 맞춰 배율 조정'));box.append(normal);return box;
     }));
+    renderResponsiveFields();
 }
+function renderResponsiveFields(){
+    for(const device of ['pc','mo']){
+        const field=$(device+'-overlay-target');field.replaceChildren();
+        const candidates=state.edit.targets.filter(t=>t.enabled&&t.device===device);
+        const blank=element('option','해당 대상 없음');blank.value='';field.append(blank);
+        for(const target of candidates){const option=element('option',`${target.name} · ${target.width}px`);option.value=target.id;field.append(option);}
+        const saved=state.edit.responsive[device];field.value=candidates.some(t=>t.id===saved)?saved:(candidates.find(t=>/^(pc|desktop|mobile|mo)$/.test(t.id))||candidates[0])?.id||'';
+        state.edit.responsive[device]=field.value||null;
+    }
+}
+for(const device of ['pc','mo'])$(device+'-overlay-target').addEventListener('change',event=>{state.edit.responsive[device]=event.target.value||null;});
 $('new-project').addEventListener('click',()=>editProject());
 $('edit-project').addEventListener('click',()=>editProject(currentProject()));
 $('welcome-new').addEventListener('click',action(async()=>{if(state.project)await startRun();else editProject();}));
@@ -237,6 +263,7 @@ $('project-form').addEventListener('submit',async event=>{
         state.edit.name=$('project-name-input').value;state.edit.url=$('project-url-input').value;state.edit.profile=JSON.parse($('profile-input').value);
         if($('source-html-input').value.trim()&&!$('source-root-input').value.trim())throw new Error('HTML 파일과 함께 소스 폴더도 지정하세요.');
         state.edit.source=$('source-root-input').value.trim()?{root:$('source-root-input').value.trim(),html:$('source-html-input').value.trim(),url_prefix:$('source-prefix-input').value.trim()}:null;
+        state.edit.responsive.breakpoint=Number($('breakpoint-input').value);
         state.edit.settings={pixel_threshold:Number($('threshold-input').value),font_tolerance:Number($('tolerance-input').value),strip_height:Number($('strip-input').value)};
         const saved=await api('/api/projects',state.edit);$('project-dialog').close();await refresh();await selectProject(saved.id);toast('프로젝트 설정을 저장했습니다.');
     }catch(error){$('project-error').textContent=error.message;}finally{$('save-project').disabled=false;}
@@ -268,9 +295,10 @@ $('chrome-review').addEventListener('click',action(async()=>{
     const route=`/api/chrome-review?run=${result.run_id}&target=${result.target_id}&revision=${result.id}`;
     const response=await fetch(route,{headers:{'X-VisualQA':token}});
     if(!response.ok){const value=await response.json();throw new Error(value.error||'검수 파일을 만들지 못했습니다.');}
-    await response.body?.cancel();
-    const a=element('a');a.href=route;a.download='visualqa-review.json';document.body.append(a);a.click();a.remove();
-    toast('파일을 저장한 뒤 Chrome의 시안 검수 확장 도구에서 불러오세요.');
+    const url=URL.createObjectURL(await response.blob());
+    const a=element('a');a.href=url;a.download='visualqa-review.json';document.body.append(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),30000);
+    toast('PC·MO 통합 파일을 저장했습니다. Chrome 확장에서 한 번 불러오세요.');
 }));
 $('prune-runs').addEventListener('click',action(async()=>{
     const input=prompt('완료된 검수 이력을 최근 몇 개 보관할까요? 실패·중단 이력은 유지합니다.','20');if(input===null)return;

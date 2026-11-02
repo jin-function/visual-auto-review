@@ -4,7 +4,7 @@ import json
 import unittest
 
 import test_refactor
-from qa.chrome_review import chrome_review, encoded_review
+from qa.chrome_review import chrome_review, chrome_bundle, encoded_review
 from qa.storage import atomic_json
 
 
@@ -36,9 +36,40 @@ class ChromeReviewTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(image).hexdigest(), package["image"]["sha256"])
         self.assertEqual(image, self.store.asset_path(latest["asset"]["id"]).read_bytes())
         self.assertNotEqual(image, (self.store.revision_path(run["id"], "mobile", latest["id"]) / "diff.png").read_bytes())
-        earlier = json.loads(encoded_review(self.store, run["id"], "mobile", first["id"]))
+        earlier = json.loads(encoded_review(self.store, run["id"], "mobile", first["id"]))['targets'][0]
         self.assertEqual(earlier["placement"]["y"], 0)
         self.assertEqual(earlier["revisionId"], first["id"])
+
+    def test_bundle_includes_both_devices_and_human_judgment(self):
+        self.project['targets'].append({**self.project['targets'][0], 'id': 'pc', 'device': 'pc', 'name': 'PC', 'width': 1920})
+        self.project['responsive'] = {'breakpoint': 900}
+        self.project = self.service.save_project(self.project)
+        run = self.start()
+        result = self.store.result(run['id'], 'mobile')
+        finding = result['findings'][0]
+        self.store.review(run['id'], 'mobile', result['id'], finding['id'], 'fix', 'high', '수정할 제목')
+        package = chrome_bundle(self.store, run['id'])
+        self.assertEqual(package['version'], 3)
+        self.assertEqual(package['responsive']['breakpoint'], 900)
+        self.assertEqual({t['device'] for t in package['targets']}, {'pc', 'mo'})
+        self.assertTrue(all(t['runId'] == run['id'] for t in package['targets']))
+        mobile = next(t for t in package['targets'] if t['device'] == 'mo')
+        self.assertEqual(mobile['findings'][0]['review']['note'], '수정할 제목')
+        self.assertEqual(chrome_bundle(self.store, run['id'])['packageId'], package['packageId'])
+
+    def test_partial_bundle_reports_unavailable_device(self):
+        run = self.start()
+        package = chrome_bundle(self.store, run['id'])
+        self.assertEqual([t['device'] for t in package['targets']], ['mo'])
+        self.assertEqual(package['unavailable'][0]['device'], 'pc')
+
+    def test_ambiguous_device_requires_project_selection(self):
+        value = {**self.project, 'targets': [{**self.project['targets'][0], 'id': 'wide-a', 'device': 'pc'},
+                                          {**self.project['targets'][0], 'id': 'wide-b', 'device': 'pc'}]}
+        with self.assertRaisesRegex(ValueError, '오버레이 대상을 선택'):
+            self.service.validate_project(value)
+        value['responsive'] = {'pc': 'wide-b', 'breakpoint': 1024}
+        self.assertEqual(self.service.validate_project(value)['responsive']['pc'], 'wide-b')
 
     def test_negative_alignment_and_unscaled_original_are_preserved(self):
         import io

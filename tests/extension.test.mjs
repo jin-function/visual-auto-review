@@ -146,3 +146,37 @@ test('CSS source merge preserves authored rules/comments and inserts or deletes 
     const tricky = '/* { */\n.a[data-v="};"] { content: "}"; --x: {nested: ";"}; background: url(data:x;{}); }\n@media (min-width:1px) {.b{color:red}}';
     assert.equal(cssRuleRanges(tricky).length, 2);
 });
+
+test('v3 package validates both images before import and rejects mixed or duplicate targets', async () => {
+    const {validatePackage, CONTRACT} = await import('../chrome-extension/core.mjs');
+    const base64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jF9sAAAAASUVORK5CYII=';
+    const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+    const sha256 = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(x => x.toString(16).padStart(2, '0')).join('');
+    const target = {format: CONTRACT.format, version: 2, imageRole:'reference-original',name:'fixture',runId:'r',revisionId:'v',url:'https://e.test/page',placement:{x:0,y:0},display:{width:390,height:390},viewportWidth:390,image:{mime:'image/png',width:1,height:1,sha256,base64},findings:[]};
+    const pc = {...target, device:'pc',targetId:'pc',revisionId:'pc-v',viewportWidth:1920};
+    const mo = {...target, device:'mo',targetId:'mobile'};
+    const packageValue = {format:CONTRACT.format,version:3,packageId:'a'.repeat(64),coordinateSpace:CONTRACT.coordinateSpace,runId:'r',url:target.url,responsive:{breakpoint:900},targets:[pc,mo]};
+    const group = await validatePackage(packageValue);
+    assert.equal(group.targets.length,2);assert.equal(group.breakpoint,900);assert.notEqual(group.targets[0].id,group.targets[1].id);
+    await assert.rejects(validatePackage({...packageValue,targets:[pc,pc]}), /중복/);
+    await assert.rejects(validatePackage({...packageValue,targets:[pc,{...mo,runId:'other'}]}), /같은 실행/);
+    await assert.rejects(validatePackage({...packageValue,targets:[pc,{...mo,image:{...mo.image,sha256:'0'.repeat(64)}}]}), /손상/);
+    const old = await validatePackage(mo);assert.equal(old.legacy,true);assert.equal(old.targets.length,1);
+});
+
+test('app and extension use the same generated handoff contract', async () => {
+    const fs = await import('node:fs/promises');
+    const {CONTRACT} = await import('../chrome-extension/contract.mjs');
+    assert.deepEqual(CONTRACT, JSON.parse(await fs.readFile(new URL('../app/review-contract.json',import.meta.url),'utf8')));
+});
+
+test('late responses from a previous result/revision cannot update the selected view', async () => {
+    const {runInNewContext} = await import('node:vm');
+    const fs = await import('node:fs/promises');
+    const window = {};
+    runInNewContext(await fs.readFile(new URL('../app/web/request_state.js',import.meta.url),'utf8'),{window});
+    const first=window.VisualQARequests.begin('result');
+    const second=window.VisualQARequests.begin('result');
+    assert.equal(first(),false);assert.equal(second(),true);
+    window.VisualQARequests.begin('run','result');assert.equal(second(),false);
+});

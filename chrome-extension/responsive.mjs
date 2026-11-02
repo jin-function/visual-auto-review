@@ -1,5 +1,6 @@
 import './overlay-layout.js';
-export const DEFAULT_BREAKPOINT = 1024;
+import {CONTRACT} from './contract.mjs';
+export const DEFAULT_BREAKPOINT = CONTRACT.defaultBreakpoint;
 export const overlayGeometry = globalThis.VisualQALayout.geometry;
 
 export function deviceForWidth(width, breakpoint = DEFAULT_BREAKPOINT) {
@@ -17,7 +18,8 @@ export function reviewDevice(review, breakpoint = DEFAULT_BREAKPOINT) {
 export function initialVariants(anchor, reviews, samePage) {
     const variants = {pc: null, mo: null};
     const candidates = reviews.filter(review => review.version === 2 && review.imageRole === 'reference-original'
-        && anchor.runId && review.runId === anchor.runId && samePage(review.url, anchor.url))
+        && (anchor.packageId ? review.packageId === anchor.packageId : anchor.runId && review.runId === anchor.runId)
+        && samePage(review.url, anchor.url))
         .sort((a, b) => (b.importedAt || 0) - (a.importedAt || 0));
     for (const review of candidates) {
         const device = reviewDevice(review);

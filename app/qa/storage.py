@@ -53,6 +53,7 @@ class Store:
     def __init__(self, root: Path):
         self.root = root.expanduser().resolve()
         self.lock = threading.RLock()
+        self._summaries = {}
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
         for name in ("projects", "assets", "runs"):
             (self.root / name).mkdir(parents=True, exist_ok=True)
@@ -132,6 +133,25 @@ class Store:
             items = [read_json(p) for p in (self.root / "runs").glob("*/run.json")]
             return sorted((r for r in items if not project_id or r["project_id"] == project_id),
                           key=lambda r: r["created_at"], reverse=True)
+
+    def run_summaries(self) -> list[dict]:
+        """State polling reads lightweight metadata, not every project snapshot."""
+        with self.lock:
+            items = []
+            paths = set((self.root / "runs").glob("*/run.json"))
+            for deleted in self._summaries.keys() - paths:
+                del self._summaries[deleted]
+            for path in paths:
+                stat = path.stat()
+                signature = (stat.st_mtime_ns, stat.st_size)
+                cached = self._summaries.get(path)
+                if not cached or cached[0] != signature:
+                    run = read_json(path)
+                    summary = {key: run.get(key) for key in ("id", "project_id", "created_at", "status", "finished_at", "targets")}
+                    cached = (signature, summary)
+                    self._summaries[path] = cached
+                items.append(cached[1])
+            return sorted(items, key=lambda run: run["created_at"], reverse=True)
 
     def revision_path(self, run_id: str, target_id: str, revision_id: str) -> Path:
         return self.run_path(run_id) / "targets" / valid_id(target_id) / "revisions" / valid_id(revision_id)

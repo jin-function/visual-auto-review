@@ -97,12 +97,7 @@ def compare(reference: Image.Image, actual: Image.Image, metadata: dict, setting
     actual_frame = _frame(actual, (width, height), actual_top)
     changed = np.zeros((height, width), dtype=bool)
     delta_rows = np.zeros(height, dtype=np.float64)
-    text_mask = Image.new("L", (width, height), 0)
-    draw = ImageDraw.Draw(text_mask)
-    for rect in metadata.get("textRects", []):
-        left, top, right, bottom = _rect(rect, width, height, actual_top)
-        if right > left and bottom > top:
-            draw.rectangle((left, top, right - 1, bottom - 1), fill=255)
+    text_rects = [_rect(rect, width, height, actual_top) for rect in metadata.get("textRects", [])]
     geometry_rows = np.zeros(height, dtype=bool)
     rows = np.arange(height)
     geometry_rows[:] = ~((rows >= ref_top) & (rows < ref_top + reference.height) &
@@ -120,7 +115,12 @@ def compare(reference: Image.Image, actual: Image.Image, metadata: dict, setting
         if radius and metadata.get("textRects"):
             # RGB tuples must match a real neighboring pixel in BOTH directions.
             # Never apply the text tolerance to arbitrary images or geometry.
-            text = np.asarray(text_mask.crop(box)) > 0
+            text_mask = Image.new("L", (width, tile_bottom - tile_top), 0)
+            draw = ImageDraw.Draw(text_mask)
+            for left, first, right, last in text_rects:
+                if right > left and last > first and last > tile_top and first < tile_bottom:
+                    draw.rectangle((left, first - tile_top, right - 1, last - tile_top - 1), fill=255)
+            text = np.asarray(text_mask) > 0
             allow = text & (delta >= threshold)
             if allow.any():
                 edge = np.asarray(ref_tile.convert("L").filter(ImageFilter.MaxFilter(3)), dtype=np.int16)
@@ -198,7 +198,10 @@ def compare(reference: Image.Image, actual: Image.Image, metadata: dict, setting
                "geometry_pixels": geometry_count, "font_tolerance": radius,
                "verdict": "FAIL" if geometry_count else "REVIEW" if count else "PASS",
                "verdict_notice": "자동 판정은 확인 필요 영역을 표시합니다. 최종 판단은 항목별 검수 상태로 관리합니다."}
-    for name, image in (("reference.png", ref_frame), ("actual.png", actual_frame),
-                        ("diff.png", diff), ("overlay.png", Image.blend(ref_frame, actual_frame, 0.5))):
+    for name, image in (("reference.png", ref_frame), ("actual.png", actual_frame), ("diff.png", diff)):
         image.save(output / name, "PNG", compress_level=1)
+    diff.close()
+    overlay = Image.blend(ref_frame, actual_frame, 0.5)
+    overlay.save(output / "overlay.png", "PNG", compress_level=1)
+    overlay.close()
     return {"metrics": metrics, "strips": strips, "findings": findings}

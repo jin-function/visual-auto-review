@@ -67,7 +67,7 @@ class Capture:
             raise RuntimeError("앱 종료로 캡처가 중단되었습니다.")
         directory.mkdir(parents=True, exist_ok=True)
         config = directory / "capture-config.json"
-        atomic_json(config, profile)
+        atomic_json(config, {**profile, "emulateMobile": target.get("device") == "mo" if target.get("device") else target["width"] <= 600})
         output = directory / ("inspection.json" if selector else "actual.png")
         node = executable("VISUAL_QA_NODE", [str(APP_ROOT / "runtime/node/node.exe"), str(APP_ROOT / "runtime/node/bin/node"), shutil.which("node")])
         command = [node, str(APP_ROOT / "capture_page.js"), chrome_path(), url,

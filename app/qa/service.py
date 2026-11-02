@@ -2,29 +2,26 @@
 
 from __future__ import annotations
 
-import copy
-import hashlib
-import os
 import shutil
 import threading
 import tempfile
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from urllib.parse import urlparse
 
-from PIL import Image
-
-from .capture import Capture, validate_profile
-from .engine import compare
-from .storage import Store, atomic_json, identifier, now, read_json, valid_id
-from .source import Sources, normalize_source
+from .capture import Capture
+from .storage import Store, identifier, now, read_json, valid_id
+from .source import Sources
 from .platform_support import acquire_lease, release_lease
+from .projects import Projects
+from .revisions import Revisions
+from .jobs import Jobs
 
 
 class Service:
     def __init__(self, store: Store):
         self.store = store
         self.sources = Sources(store)
+        self.projects = Projects(store)
+        self.revisions = Revisions(store)
         self.inspection_lock = threading.Lock()
         self.lease = (store.root / ".service.lock").open("a+")
         try:
@@ -33,67 +30,26 @@ class Service:
             self.lease.close()
             raise RuntimeError("같은 저장 위치를 사용하는 검수 서비스가 이미 실행 중입니다.") from error
         self.capture = Capture()
-        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="visual-qa")
-        self.active: set[str] = set()
         self.lock = threading.RLock()
+        self.jobs = Jobs(self._shutdown_finished)
+        self.executor = self.jobs.executor
+        self.active = self.jobs.active
         self.store.recover_interrupted()
 
+    def _shutdown_finished(self) -> None:
+        with self.lock:
+            self.store.recover_interrupted()
+            if not self.lease.closed:
+                release_lease(self.lease)
+                self.lease.close()
+
     def close(self) -> None:
-        self.capture.stop()
-        self.executor.shutdown(wait=False, cancel_futures=True)
-        if not self.active and not self.lease.closed:
-            release_lease(self.lease)
-            self.lease.close()
+        with self.lock:
+            self.capture.stop()
+            self.jobs.close()
 
     def validate_project(self, value: dict) -> dict:
-        project = copy.deepcopy(value)
-        project["name"] = str(project.get("name", "")).strip()[:160]
-        if not project["name"]:
-            raise ValueError("프로젝트 이름을 입력하세요.")
-        url = str(project.get("url", "")).strip()
-        parsed = urlparse(url)
-        if parsed.scheme not in {"http", "https", "file"} or (parsed.scheme != "file" and not parsed.hostname):
-            raise ValueError("http://, https:// 또는 file:// 주소를 입력하세요.")
-        project["url"] = url
-        project["source"] = normalize_source(project.get("source"), url)
-        targets = project.get("targets", [])
-        if not isinstance(targets, list) or not 1 <= len(targets) <= 8:
-            raise ValueError("검수 대상은 1~8개여야 합니다.")
-        seen = set()
-        enabled = 0
-        for target in targets:
-            target["id"] = valid_id(target.get("id", ""))
-            if target["id"] in seen:
-                raise ValueError("검수 대상 이름이 중복되었습니다.")
-            seen.add(target["id"])
-            target["name"] = str(target.get("name", target["id"]))[:80]
-            target["enabled"] = bool(target.get("enabled", True))
-            enabled += target["enabled"]
-            for key, default, low, high in (("width", 390, 240, 3840), ("viewport_height", 844, 320, 2160)):
-                number = target.get(key, default)
-                if not isinstance(number, int) or not low <= number <= high:
-                    raise ValueError(f"{target['name']}의 크기 설정을 확인하세요.")
-                target[key] = number
-            if target["enabled"]:
-                if not target.get("asset_id"):
-                    raise ValueError(f"{target['name']} 시안을 선택하세요.")
-                self.store.asset(target.get("asset_id", ""))
-            target["normalize"] = bool(target.get("normalize", True))
-        if not enabled:
-            raise ValueError("검수 대상을 하나 이상 선택하세요.")
-        project["profile"] = validate_profile(project.get("profile"))
-        settings = project.get("settings", {})
-        project["settings"] = {"pixel_threshold": settings.get("pixel_threshold", 24),
-                               "font_tolerance": settings.get("font_tolerance", 1),
-                               "strip_height": settings.get("strip_height", 600)}
-        s = project["settings"]
-        if not isinstance(s["pixel_threshold"], int) or not 1 <= s["pixel_threshold"] <= 255:
-            raise ValueError("색상 허용값은 1~255여야 합니다.")
-        if s["font_tolerance"] not in (0, 1, 2) or not isinstance(s["strip_height"], int) or not 64 <= s["strip_height"] <= 4000:
-            raise ValueError("텍스트 허용치 또는 구간 높이를 확인하세요.")
-        if project.get("id"):
-            valid_id(project["id"])
-        return project
+        return self.projects.validate(value)
 
     def save_project(self, value: dict) -> dict:
         with self.lock:
@@ -133,6 +89,8 @@ class Service:
     def start(self, project_id: str) -> dict:
         project = self.validate_project(self.store.project(project_id))
         with self.lock:
+            if self.jobs.closed:
+                raise ValueError("검수 서비스가 종료 중입니다.")
             if any(self.store.run(r)["project_id"] == project_id for r in self.active):
                 raise ValueError("이 프로젝트의 검수가 진행 중입니다.")
             run = {"id": identifier(), "project_id": project_id, "project": project,
@@ -146,16 +104,7 @@ class Service:
             return run
 
     def _submit(self, key: str, function) -> None:
-        if key in self.active:
-            raise ValueError("이미 처리 중입니다.")
-        self.active.add(key)
-        def task():
-            try:
-                function()
-            finally:
-                with self.lock:
-                    self.active.discard(key)
-        self.executor.submit(task)
+        self.jobs.submit(key, function)
 
     def _target_update(self, run_id: str, target_id: str, **changes) -> None:
         with self.store.lock:
@@ -165,6 +114,8 @@ class Service:
 
     def retry(self, run_id: str) -> dict:
         with self.lock:
+            if self.jobs.closed:
+                raise ValueError("검수 서비스가 종료 중입니다.")
             run = self.store.run(run_id)
             targets = [key for key, value in run["targets"].items() if value["status"] in {"failed", "interrupted"}]
             if not targets:
@@ -209,6 +160,8 @@ class Service:
 
     def recalculate(self, run_id: str, target_id: str, offset: int, reason: str) -> dict:
         with self.lock:
+            if self.jobs.closed:
+                raise ValueError("검수 서비스가 종료 중입니다.")
             run = self.store.run(run_id)
             target_id = valid_id(target_id)
             target = run["targets"][target_id]
@@ -231,84 +184,9 @@ class Service:
             self._submit(run_id, action)
             return self.store.run(run_id)
 
-    def _previous(self, run: dict, target_id: str) -> tuple[dict | None, dict | None]:
-        current = run["targets"][target_id]
-        if current.get("current_revision"):
-            return self.store.result(run["id"], target_id), run
-        for previous in self.store.runs(run["project_id"]):
-            if previous["id"] == run["id"] or previous["created_at"] >= run["created_at"]:
-                continue
-            if previous["targets"].get(target_id, {}).get("current_revision"):
-                return self.store.result(previous["id"], target_id), previous
-        return None, None
 
-    def _revision(self, run_id: str, target_id: str, offset: int, reason: str, metadata: dict, directory: Path) -> str:
-        run = self.store.run(run_id)
-        target = next(t for t in run["project"]["targets"] if t["id"] == target_id)
-        asset = self.store.asset(target["asset_id"])
-        revision_id = identifier()
-        final = self.store.revision_path(run_id, target_id, revision_id)
-        temporary = final.with_name(".building-" + revision_id)
-        temporary.mkdir(parents=True)
-        try:
-            with Image.open(self.store.asset_path(target["asset_id"])) as image:
-                reference = image.convert("RGB")
-            with Image.open(directory / "actual.png") as image:
-                actual = image.convert("RGB")
-            width = actual.width
-            scale = width / reference.width
-            if reference.width != width:
-                if not target["normalize"]:
-                    raise ValueError(f"시안 폭 {reference.width}px와 캡처 폭 {width}px가 다릅니다. 시안 배율 설정을 확인하세요.")
-                reference = reference.resize((width, max(1, round(reference.height * scale))), Image.Resampling.LANCZOS)
-            result = compare(reference, actual, metadata, run["project"]["settings"], temporary, offset)
-            if any(metadata.get(key) for key in ("brokenImages", "httpErrors", "consoleErrors", "resourceFailures")):
-                if result["metrics"]["verdict"] == "PASS":
-                    result["metrics"]["verdict"] = "REVIEW"
-            signature = hashlib.sha256(str((target["asset_id"], width, run["project"]["url"],
-                                            run["project"]["profile"], run["project"]["settings"])).encode()).hexdigest()
-            result.update(id=revision_id, run_id=run_id, target_id=target_id, created_at=now(),
-                          y_offset=offset, reason=reason, asset=asset, reference_scale=scale,
-                          baseline_signature=signature, settings=run["project"]["settings"], capture=metadata)
-            previous, previous_run = self._previous(run, target_id)
-            reviews = {}
-            history = {"compatible": False, "previous_run": None, "new": [], "persisting": [], "not_detected": []}
-            if previous:
-                history["previous_run"] = previous_run["id"]
-                history["previous_revision"] = previous["id"]
-                history["compatible"] = previous.get("baseline_signature") == signature
-                if history["compatible"]:
-                    old = {f["id"]: f for f in previous["findings"]}
-                    new = {f["id"]: f for f in result["findings"]}
-                    for finding in result["findings"]:
-                        previous_finding = old.get(finding["id"])
-                        prior_review = previous.get("reviews", {}).get(finding["id"])
-                        if previous_finding:
-                            history["persisting"].append(finding["id"])
-                            if prior_review:
-                                finding["previous_review"] = prior_review
-                                if previous_finding["evidence"] == finding["evidence"] and prior_review["status"] != "resolved":
-                                    reviews[finding["id"]] = prior_review
-                        else:
-                            history["new"].append(finding["id"])
-                    history["not_detected"] = [{"id": f["id"], "rect": f["rect"], "title": f["title"],
-                                                "previous_review": previous.get("reviews", {}).get(f["id"])}
-                                               for f in previous["findings"] if f["id"] not in new]
-            result["history"] = history
-            atomic_json(temporary / "result.json", result)
-            atomic_json(temporary / "reviews.json", reviews)
-            atomic_json(temporary / "review-history.json", [])
-            os.replace(temporary, final)
-            with self.store.lock:
-                fresh = self.store.run(run_id)
-                fresh["targets"][target_id]["revisions"].append({"id": revision_id, "created_at": result["created_at"],
-                                                               "y_offset": offset, "reason": reason})
-                self.store.save_run(fresh)
-            return revision_id
-        except Exception:
-            shutil.rmtree(temporary, ignore_errors=True)
-            raise
-
+    def _revision(self, *args, **kwargs) -> str:
+        return self.revisions.build(*args, **kwargs)
     def prune(self, project_id: str, keep: int) -> list[str]:
         if not isinstance(keep, int) or keep < 1:
             raise ValueError("완료 이력은 최소 한 개 이상 보관해야 합니다.")

@@ -3,11 +3,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
-import {spawn} from 'node:child_process';
+import {spawn, spawnSync} from 'node:child_process';
 import {deflateSync} from 'node:zlib';
 import {createHash} from 'node:crypto';
 import assert from 'node:assert/strict';
 import {crc32} from '../chrome-extension/zip.mjs';
+import {validateReview} from '../chrome-extension/core.mjs';
 
 const root = path.resolve('.'), temp = fs.mkdtempSync(path.join(os.tmpdir(), 'visualqa-extension-test-'));
 const extension = path.join(temp, 'extension'); fs.cpSync(path.join(root, 'chrome-extension'), extension, {recursive: true});
@@ -82,7 +83,7 @@ async function evaluate(session, expression, userGesture = false) {
 }
 async function attach(targetId) { return (await send('Target.attachToTarget', {targetId, flatten: true})).sessionId; }
 async function targets() { return (await send('Target.getTargets')).targetInfos; }
-let receipt, devtoolsParent;
+let receipt, devtoolsParent, appServer;
 try {
     async function verify() {
     await until(() => fs.existsSync(path.join(temp, 'profile/DevToolsActivePort')), 'Chrome ready');
@@ -98,6 +99,12 @@ try {
     await send('Browser.setDownloadBehavior', {behavior: 'allow', downloadPath: path.join(temp, 'downloads'), eventsEnabled: true});
     const worker = await until(async () => (await targets()).find(target => target.type === 'service_worker' && target.url.endsWith('/background.js')), 'extension worker');
     const extensionOrigin = new URL(worker.url).origin === 'null' ? worker.url.slice(0, worker.url.indexOf('/background.js')) : new URL(worker.url).origin;
+    if (!staleManifest) {
+        const seedSession = await attach(worker.targetId); await send('Runtime.enable',{},seedSession);
+        const oldReview = await validateReview(review);
+        await evaluate(seedSession, `new Promise((resolve,reject)=>{const request=indexedDB.open('visualqa-reviews',1);request.onupgradeneeded=()=>request.result.createObjectStore('reviews',{keyPath:'id'});request.onerror=()=>reject(request.error);request.onsuccess=()=>{const db=request.result;const tx=db.transaction(['reviews'],'readwrite');tx.objectStore('reviews').put(${JSON.stringify(oldReview)});tx.oncomplete=()=>{db.close();resolve(true);};tx.onerror=()=>reject(tx.error);};})`);
+        await send('Target.detachFromTarget',{sessionId:seedSession});
+    }
     const {targetId} = await send('Target.createTarget', {url});
     const page = await attach(targetId);
     await send('Runtime.enable', {}, page); await send('Page.enable', {}, page); await send('DOM.enable', {}, page); await send('CSS.enable', {}, page);
@@ -157,7 +164,7 @@ try {
     }
     const panelTarget = await until(async () => (await targets()).find(target => target.url.startsWith(extensionOrigin + '/workspace.html')), 'review panel');
     const panel = await attach(panelTarget.targetId); await send('Runtime.enable', {}, panel);
-    await until(() => evaluate(panel, `document.querySelector('#import') && !document.querySelector('#export').disabled`), 'panel initialized');
+    await until(() => evaluate(panel, `!!document.querySelector('#import')`), 'panel initialized');
     await evaluate(panel, `globalThis.__nativeSidePanel=chrome.sidePanel;Object.defineProperty(chrome,'sidePanel',{value:undefined,configurable:true});`);
     assert.equal(await evaluate(panel, 'typeof chrome.sidePanel'), 'undefined');
     await evaluate(panel, `(() => { const transfer = new DataTransfer(); transfer.items.add(new File([${JSON.stringify(JSON.stringify(review))}], 'review.json', {type:'application/json'})); const input=document.querySelector('#import'); input.files=transfer.files; input.dispatchEvent(new Event('change')); })()`);
@@ -178,18 +185,18 @@ try {
         console.error('Sidepanel startup:', JSON.stringify(await evaluate(side, `(async()=>({message:document.querySelector('#message')?.textContent,tools:!!document.querySelector('visualqa-tools'),window:await chrome.windows.getCurrent(),tabs:await chrome.tabs.query({active:true}),toolbar:typeof VisualQAToolbar}))()`)));
         throw error;
     }
-    async function tool(selector, operation) {
-        const document = await send('DOM.getDocument', {depth: -1, pierce: true}, side);
+    async function tool(selector, operation, session = side) {
+        const document = await send('DOM.getDocument', {depth: -1, pierce: true}, session);
         function find(node) {
             if (node.nodeName === 'VISUALQA-TOOLS') return node;
             for (const child of [...(node.children || []), ...(node.shadowRoots || [])]) { const result = find(child); if (result) return result; }
         }
         const host = find(document.root);
         assert.ok(host?.shadowRoots?.length, 'toolbar shadow root exists');
-        const element = await send('DOM.querySelector', {nodeId: host.shadowRoots[0].nodeId, selector}, side);
+        const element = await send('DOM.querySelector', {nodeId: host.shadowRoots[0].nodeId, selector}, session);
         assert.ok(element.nodeId, selector);
-        const object = await send('DOM.resolveNode', {nodeId: element.nodeId}, side);
-        const result = await send('Runtime.callFunctionOn', {objectId: object.object.objectId, functionDeclaration: `function(){${operation}}`, returnByValue: true, awaitPromise: true}, side);
+        const object = await send('DOM.resolveNode', {nodeId: element.nodeId}, session);
+        const result = await send('Runtime.callFunctionOn', {objectId: object.object.objectId, functionDeclaration: `function(){${operation}}`, returnByValue: true, awaitPromise: true}, session);
         if (result.exceptionDetails) throw new Error(result.exceptionDetails.text);
         return result.result.value;
     }
@@ -248,9 +255,9 @@ try {
     assert.equal(await tool('[data-tool="opacity"]', 'return Number(this.value);'), 65);
     await tool('[data-tool="opacity"]', `this.value='40';this.dispatchEvent(new Event('input'));`);
     await pause(200);
-    await evaluate(panel, `document.querySelector('.finding button').click()`);
-    await until(() => evaluate(panel, `document.querySelector('#message').textContent.includes('이동했습니다')`), 'finding jump');
-    await evaluate(panel, `document.querySelectorAll('.finding button')[1].click()`);
+    await tool('[data-tool="findings-tab"]', 'this.click();');
+    await tool('[data-tool="jump"]', 'this.click();');
+    await tool('[data-tool="inspect"]', 'this.click();');
     await until(() => evaluate(devtools, `new Promise(resolve=>chrome.devtools.inspectedWindow.eval('$0?.id',resolve))`).then(value => value === 'hero'), 'native Elements inspection');
     const overlayShot = await send('Page.captureScreenshot', {format: 'png'}, page);
     fs.writeFileSync(path.join(root, 'verification/chrome-overlay.png'), Buffer.from(overlayShot.data, 'base64'));
@@ -286,13 +293,8 @@ try {
     fs.copyFileSync(path.join(temp, 'downloads', downloaded), path.join(root, 'verification/chrome-toolbar-edited.zip'));
     const toolbarShot = await send('Page.captureScreenshot', {format: 'png'}, side);
     fs.writeFileSync(path.join(root, 'verification/chrome-toolbar.png'), Buffer.from(toolbarShot.data, 'base64'));
-    // Exercise the actual export button and its DOM/CSS collection, not a mocked API.
-    await evaluate(panel, `document.querySelector('#export').click()`);
-    await until(() => evaluate(panel, `!!document.querySelector('#export-result a') || document.querySelector('#message').classList.contains('error')`), 'export');
-    const exportError = await evaluate(panel, `document.querySelector('#message').classList.contains('error') ? document.querySelector('#message').textContent : ''`);
-    assert.equal(exportError, '');
-    const output = await evaluate(panel, `(async()=>{const href=document.querySelector('#export-result a').href;const bytes=new Uint8Array(await (await fetch(href)).arrayBuffer());let text='';for(let i=0;i<bytes.length;i+=8192)text+=String.fromCharCode(...bytes.subarray(i,i+8192));return btoa(text);})()`);
-    const zipPath = path.join(root, 'verification/chrome-edited-page.zip'); fs.writeFileSync(zipPath, Buffer.from(output, 'base64'));
+    const zipPath = path.join(root, 'verification/chrome-edited-page.zip');
+    fs.copyFileSync(path.join(temp, 'downloads', downloaded), zipPath);
     const detail = await evaluate(panel, `(async()=>{const {collectExport,buildExport}=await import('./export.mjs');const {snapshot,contents}=await collectExport();const result=buildExport(snapshot,contents,null,null);return {filename:result.filename,files:result.files,manifest:result.manifest,resourceUrls:[...contents.keys()]};})()`);
     const html = detail.files.find(file => file.name.startsWith('html/')).content;
     assert.ok(html.includes('개발자도구에서 수정한 제목')); assert.ok(html.includes('value="after"')); assert.ok(html.includes('>after</textarea>'));
@@ -362,7 +364,7 @@ try {
     await tool('[data-tool="manage"]', 'this.click();');
     await evaluate(side, `(()=>{const transfer=new DataTransfer();transfer.items.add(new File([${JSON.stringify(JSON.stringify(pcReview))}],'pc.json',{type:'application/json'}));const input=document.querySelector('#import');input.files=transfer.files;input.dispatchEvent(new Event('change'));})()`);
     await until(() => evaluate(side, `document.querySelector('#review-info').textContent.includes('1920px')`), 'PC file import');
-    await evaluate(side, `document.querySelector('#connect').click()`, true);
+    await evaluate(side, `document.querySelector('#back').click()`, true);
     await until(async () => (await state()).overlay.reviewId && (await state()).binding.device === 'pc' && !(await state()).overlay.missingVariant, 'PC auto pairing');
     await until(() => tool('[data-tool="variant-mo"]', 'return !!this.value;'), 'MO paired in options');
     assert.equal((await state()).overlay.geometry.imageWidth, 1920);
@@ -421,6 +423,62 @@ try {
     await until(() => tool('[data-tool="findings"]', 'return this.querySelectorAll("li button").length;').then(count => count === 2), 'MO tools restored');
     assert.equal(await evaluate(page, `document.querySelectorAll('visualqa-overlay').length`), 1);
     assert.equal(await evaluate(page, 'document.documentElement.scrollHeight'), responsiveHeight);
+    // Existing v1.3 tab bindings have variants but no packageId; reload upgrades that state.
+    await evaluate(panel, `(async()=>{const key='tab:'+chrome.devtools.inspectedWindow.tabId;const current=(await chrome.storage.session.get(key))[key];delete current.packageId;delete current.packageVersion;delete current.legacy;await chrome.storage.session.set({[key]:current});})()`);
+    await send('Page.reload',{},page);
+    await until(async()=>!!(await state()).binding.packageId && (await state()).overlay.imageState==='ready','old tab binding upgraded on reload');
+    // The app's real authenticated HTTP route produces this exact file; no hand-built JS package.
+    const bundlePath = path.join(temp, 'app-review.json');
+    const generated = spawnSync(process.env.VISUAL_QA_TEST_PYTHON || 'python3', [path.join(root,'tests/export_bundle_fixture.py'),'--url',url,'--destination',bundlePath],
+        {encoding:'utf8',env:{...process.env,PYTHONPATH:path.join(root,'app'),PYTHONDONTWRITEBYTECODE:'1'}});
+    assert.equal(generated.status,0,generated.stdout+generated.stderr);
+    const appBundle = JSON.parse(fs.readFileSync(bundlePath,'utf8'));
+    await tool('[data-tool="manage"]', 'this.click();');
+    await evaluate(side, `(()=>{const transfer=new DataTransfer();transfer.items.add(new File([${JSON.stringify(JSON.stringify(appBundle))}],'app-review.json',{type:'application/json'}));const input=document.querySelector('#import');input.files=transfer.files;input.dispatchEvent(new Event('change'));})()`);
+    await until(() => evaluate(side, `document.querySelector('#message').textContent.includes('파일을 불러왔습니다') && document.querySelector('#reviews').value===${JSON.stringify(appBundle.packageId)}`),'one app bundle imported');
+    await evaluate(side, `document.querySelector('#connect').click()`,true);
+    await resize(1200);
+    await until(async () => (await state()).binding.packageId===appBundle.packageId && (await state()).overlay.imageState==='ready','app bundle PC ready');
+    await until(() => bitmapMatches(0,200,2,100),'real app PC pixels');
+    assert.equal(await tool('[data-tool="variant-pc"]','return this.closest("label").hidden;'),true);
+    assert.equal(await tool('[data-tool="variant-mo"]','return this.closest("label").hidden;'),true);
+    assert.match(await tool('[data-tool="registration"]','return this.textContent;'), /PC:.*PC/);
+    assert.ok((await tool('[data-tool="findings"]','return this.textContent;')).includes('앱에 기록한 수정 메모'));
+    await until(()=>tool('[data-tool="registration"]','return this.textContent;',panel).then(text=>/PC:.*PC/.test(text)),'all views receive package metadata changes');
+    await tool('[data-tool="finding-filter"]', `this.value='resolved';this.dispatchEvent(new Event('change'));`);
+    assert.equal(await tool('[data-tool="findings"]','return [...this.children].filter(node=>!node.hidden).length;'),0);
+    await tool('[data-tool="finding-filter"]', `this.value='all';this.dispatchEvent(new Event('change'));`);
+    assert.equal(await tool('[data-tool="jump"]','return this.disabled;'),false,'returning to all findings restores selection');
+    await tool('[data-tool="dx"]', `this.value='23';this.dispatchEvent(new Event('input'));`);
+    await until(async () => (await state()).overlay.settings.dx===23,'package adjustment saved');
+    await tool('[data-tool="remove"]','this.click();');
+    await until(() => evaluate(side, `!document.querySelector('#connection').hidden`),'package detached');
+    await evaluate(side, `document.querySelector('#connect').click()`,true);
+    await until(async () => (await state()).overlay.settings.dx===23 && (await state()).overlay.imageState==='ready','persistent adjustment restored on connect');
+    await resize(390);
+    await until(async () => (await state()).binding.device==='mo' && (await state()).overlay.imageState==='ready','app bundle MO ready');
+    await until(() => bitmapMatches(2,200,0,100),'real app MO pixels');
+    assert.equal((await state()).overlay.settings.dx,0);
+    await resize(1200);
+    await until(async () => (await state()).overlay.imageState==='ready' && (await state()).binding.device==='pc','cached app PC ready');
+    assert.equal((await state()).overlay.settings.dx,23);
+    assert.equal((await state()).overlay.cachedReviewIds.length,2);
+    const appMeta = await evaluate(side, `(async()=>{const {listReviews}=await import('./db.js');return (await listReviews()).every(review=>!review.image.base64);})()`);
+    assert.equal(appMeta,true,'metadata queries must exclude image bytes');
+    const groupsBefore = await evaluate(side, `(async()=>{const {listPackages}=await import('./db.js');return (await listPackages()).length;})()`);
+    await tool('[data-tool="manage"]','this.click();');
+    const brokenBundle = structuredClone(appBundle);brokenBundle.packageId='b'.repeat(64);
+    const truncatedPNG=Buffer.from(brokenBundle.targets[1].image.base64,'base64').subarray(0,33);
+    brokenBundle.targets[1].image.base64=truncatedPNG.toString('base64');
+    brokenBundle.targets[1].image.sha256=createHash('sha256').update(truncatedPNG).digest('hex');
+    await evaluate(side, `(()=>{const transfer=new DataTransfer();transfer.items.add(new File([${JSON.stringify(JSON.stringify(brokenBundle))}],'broken.json',{type:'application/json'}));const input=document.querySelector('#import');input.files=transfer.files;input.dispatchEvent(new Event('change'));})()`);
+    await until(() => evaluate(side, `document.querySelector('#message').classList.contains('error')`),'corrupted package rejected');
+    assert.equal(await evaluate(side, `(async()=>{const {listPackages}=await import('./db.js');return (await listPackages()).length;})()`),groupsBefore,'failed import cannot partially save PC');
+    await evaluate(side, `document.querySelector('#back').click()`,true);
+
+    const appShot = await send('Page.captureScreenshot',{format:'png'},page);
+    fs.writeFileSync(path.join(root,'verification/unified-pc-overlay.png'),Buffer.from(appShot.data,'base64'));
+    await resize(780);
     // Reconnect the original anchor for the remaining workspace regression checks.
     await evaluate(panel, `(async()=>{const {getReview}=await import('./db.js');const {validateReview}=await import('./core.mjs');const r=await validateReview(${JSON.stringify(review)});return chrome.runtime.sendMessage({type:'connect',tabId:chrome.devtools.inspectedWindow.tabId,reviewId:r.id});})()`);
     await until(() => tool('[data-tool="visible"]', 'return this.checked;'), 'original anchor restored');
@@ -452,7 +510,36 @@ try {
     await send('Emulation.setDeviceMetricsOverride', {width: 1100, height: 1600, deviceScaleFactor: 1, mobile: false}, frontSession);
     const preview = await send('Page.captureScreenshot', {format: 'png', captureBeyondViewport: true}, frontSession);
     fs.writeFileSync(path.join(root, 'verification/chrome-devtools.png'), Buffer.from(preview.data, 'base64'));
-    receipt = {status: 'PASS', extensionVersion: manifest.version, testedFiles, browser: (await send('Browser.getVersion')).product, tests: ['original design import', 'original image overlay', 'registered and renderer versions match', 'sidepanel applied version visible', 'PC and MO distinct bitmap pixels', 'native Chrome sidepanel', 'DevTools without sidePanel namespace', 'no page tool panel', 'unchanged page styles and geometry', 'sidepanel file import and connection', 'options and findings tabs', 'keyboard tab navigation', 'finding list rendering', 'finding list navigation', 'previous and next findings', 'sidepanel opacity', 'active tab isolation', 'native sidepanel close and reopen', 'sidepanel export through native DevTools', 'strict image CSP overlay', 'pointer passthrough', 'unchanged layout height', 'finding navigation', 'native Elements selection', 'DOM edits', 'native Styles edits', 'cross-origin CSS edits', 'runtime CSSOM rules', 'form state', 'ZIP export', 'overlay and tools excluded from HTML', 'relative CSS imports and asset URLs', 'original HTML and CSS filenames', 'duplicate filenames separated by folder', 'authored CSS CRLF and indentation', 'authored CSS comments', 'CSS URL whitespace and quote preservation', 'Five Server scripts styles markup removed', 'review scripts styles markup removed', 'adopted tooling stylesheet removed', 'legitimate scripts and inline style preserved', 'hide toggle', 'reload reapplication', 'viewport mismatch', 'stale overlay cleanup', 'missing variant hides wrong design', 'PC and MO automatic pairing', '1023 and 1024 boundary switching', 'fixed minimum canvas width', 'flex centered canvas', 'PC and MO independent adjustments', 'variant findings switch', 'wide and narrow viewport geometry', 'custom breakpoint', 'rapid resize convergence', 'standalone extension workspace', 'open actual page with overlay'],
+    // Exercise the unchanged review screen and its new project/export controls in Chrome.
+    appServer = spawn(process.env.VISUAL_QA_TEST_PYTHON || 'python3', [path.join(root,'tests/export_bundle_fixture.py'),'--url',url,'--destination',path.join(temp,'ui-bundle.json'),'--serve'],
+        {env:{...process.env,PYTHONPATH:path.join(root,'app'),PYTHONDONTWRITEBYTECODE:'1'},stdio:['pipe','pipe','pipe']});
+    let appOutput='', appErrors='';
+    appServer.stdout.on('data',data=>{appOutput+=data;});appServer.stderr.on('data',data=>{appErrors+=data;});
+    const appAddress = await until(()=>appOutput.split('\n').filter(Boolean).map(line=>{try{return JSON.parse(line);}catch{return {};}}).find(item=>item.url)?.url,'temporary app UI server');
+    const appTarget = await send('Target.createTarget',{url:appAddress});
+    const appUI = await attach(appTarget.targetId);await send('Runtime.enable',{},appUI);await send('Page.enable',{},appUI);
+    await send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false},appUI);
+    await until(()=>evaluate(appUI,`!!document.querySelector('#edit-project') && !document.querySelector('#result').hidden`),'review result UI');
+    assert.equal(await evaluate(appUI,`document.querySelector('#app-version').textContent`),'로컬 저장 · v3.5.0');
+    await evaluate(appUI,`document.querySelector('#edit-project').click()`);
+    await until(()=>evaluate(appUI,`document.querySelector('#project-dialog').open`),'project configuration UI');
+    assert.equal(await evaluate(appUI,`document.querySelector('#pc-overlay-target').value`),'pc');
+    assert.equal(await evaluate(appUI,`document.querySelector('#mo-overlay-target').value`),'mo');
+    await evaluate(appUI,`document.querySelector('#breakpoint-input').value='900';document.querySelector('#project-form').requestSubmit()`);
+    await until(()=>evaluate(appUI,`!document.querySelector('#project-dialog').open`),'project settings saved');
+    const previousUIRun = await evaluate(appUI,'state.run.id');
+    await evaluate(appUI,`document.querySelector('#start-run').click()`);
+    await until(()=>evaluate(appUI,`state.run?.id!==${JSON.stringify(previousUIRun)} && document.querySelector('#run-status').textContent==='완료' && !document.querySelector('#result').hidden`),'new UI run completes');
+    await evaluate(appUI,`document.querySelector('#chrome-review').click()`,true);
+    const savedJSON = await until(()=>fs.readdirSync(path.join(temp,'downloads')).find(name=>name.endsWith('.json')),'app UI unified JSON download');
+    const uiPackage = JSON.parse(fs.readFileSync(path.join(temp,'downloads',savedJSON),'utf8'));
+    assert.equal(uiPackage.version,3);assert.equal(uiPackage.targets.length,2);assert.equal(uiPackage.responsive.breakpoint,900);
+    assert.equal((await import('../chrome-extension/core.mjs')).validatePackage instanceof Function,true);
+    const uiValidated = await (await import('../chrome-extension/core.mjs')).validatePackage(uiPackage);
+    assert.equal(uiValidated.targets.length,2);
+    fs.writeFileSync(path.join(root,'verification/unified-app-ui.png'),Buffer.from((await send('Page.captureScreenshot',{format:'png'},appUI)).data,'base64'));
+    await send('Target.closeTarget',{targetId:appTarget.targetId});appServer.stdin.end();
+    receipt = {status: 'PASS', extensionVersion: manifest.version, testedFiles, browser: (await send('Browser.getVersion')).product, tests: ['original design import', 'original image overlay', 'registered and renderer versions match', 'sidepanel applied version visible', 'PC and MO distinct bitmap pixels', 'native Chrome sidepanel', 'DevTools without sidePanel namespace', 'no page tool panel', 'unchanged page styles and geometry', 'sidepanel file import and connection', 'options and findings tabs', 'keyboard tab navigation', 'finding list rendering', 'finding list navigation', 'previous and next findings', 'sidepanel opacity', 'active tab isolation', 'native sidepanel close and reopen', 'sidepanel export through native DevTools', 'strict image CSP overlay', 'pointer passthrough', 'unchanged layout height', 'finding navigation', 'native Elements selection', 'DOM edits', 'native Styles edits', 'cross-origin CSS edits', 'runtime CSSOM rules', 'form state', 'ZIP export', 'overlay and tools excluded from HTML', 'relative CSS imports and asset URLs', 'original HTML and CSS filenames', 'duplicate filenames separated by folder', 'authored CSS CRLF and indentation', 'authored CSS comments', 'CSS URL whitespace and quote preservation', 'Five Server scripts styles markup removed', 'review scripts styles markup removed', 'adopted tooling stylesheet removed', 'legitimate scripts and inline style preserved', 'hide toggle', 'reload reapplication', 'viewport mismatch', 'stale overlay cleanup', 'missing variant hides wrong design', 'PC and MO automatic pairing', '1023 and 1024 boundary switching', 'fixed minimum canvas width', 'flex centered canvas', 'PC and MO independent adjustments', 'variant findings switch', 'wide and narrow viewport geometry', 'custom breakpoint', 'rapid resize convergence', 'standalone extension workspace', 'open actual page with overlay', 'real app HTTP v3 bundle import', 'automatic registration without PC MO selectors', 'app judgment and finding filters', 'persistent adjustments on reconnect', 'bounded image cache reused across devices', 'metadata queries exclude image bytes', 'legacy counterpart fills existing connection', 'v1 IndexedDB image migration', 'corrupt package leaves existing data intact', 'app review UI and project configuration', 'app UI exports both devices once with configured breakpoint', 'old session binding upgraded with package identity'],
         cssBenchmark, originalImage: {width: imageWidth, height: imageHeight, display: review.display},
         cssFiles: detail.manifest.stylesheets.length, cssSources: detail.manifest.stylesheets, warnings: detail.manifest.warnings, zip: zipPath};
     fs.writeFileSync(path.join(root, 'verification/chrome-extension.json'), JSON.stringify(receipt, null, 2));
@@ -469,6 +556,7 @@ try {
     fs.writeFileSync(path.join(root, 'verification/chrome-extension-failure.json'), JSON.stringify({error: error.stack, errors, frontend, targets: await targets().catch(() => []), events: events.filter(event => ['Runtime.exceptionThrown','Runtime.consoleAPICalled','Log.entryAdded'].includes(event.method))}, null, 2));
 } finally {
     for (const item of pending.values()) { clearTimeout(item.timer); item.reject(new Error('test ended')); }
+    appServer?.stdin.end(); appServer?.kill('SIGTERM');
     socket?.close(); chrome.kill('SIGTERM'); await pause(700); if (chrome.exitCode === null) chrome.kill('SIGKILL');
     server.closeAllConnections(); foreign.closeAllConnections(); server.close(); foreign.close();
     fs.rmSync(temp, {recursive: true, force: true, maxRetries: 5, retryDelay: 100});

@@ -48,6 +48,9 @@ with tempfile.TemporaryDirectory(prefix='visualqa-chrome-api-') as directory:
             assert response.headers['Content-Type'] == 'application/octet-stream'
             assert 'visualqa-review.json' in response.headers['Content-Disposition']
             package = json.load(response)
+        bundle = package
+        assert bundle['version'] == 3
+        package = bundle['targets'][0]
         assert package['placement'] == {'x': 8, 'y': 250}
         assert package['revisionId'] == result['id'] and package['findings']
         assert package['version'] == 2 and package['imageRole'] == 'reference-original'

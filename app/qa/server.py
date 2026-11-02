@@ -97,11 +97,11 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/":
                 self._file(APP_ROOT / "web/index.html", "text/html; charset=utf-8", {
                     "Set-Cookie": f"visualqa={self.server.token}; HttpOnly; SameSite=Strict; Path=/"})
-            elif parsed.path in {"/app.js", "/source_editor.js", "/style.css"}:
+            elif parsed.path in {"/app.js", "/request_state.js", "/source_editor.js", "/style.css"}:
                 mime = 'text/javascript; charset=utf-8' if parsed.path.endswith('.js') else 'text/css; charset=utf-8'
                 self._file(APP_ROOT / "web" / parsed.path[1:], mime)
             elif parsed.path == "/api/state":
-                self._json({"version": VERSION, "projects": store.projects(), "runs": store.runs(),
+                self._json({"version": VERSION, "projects": store.projects(), "runs": store.run_summaries(),
                             "profile": default_profile(), "data_root": str(store.root)})
             elif parsed.path == "/api/run":
                 self._json(store.run(query["id"]))
@@ -110,7 +110,7 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/source/file":
                 self._json(self.server.service.sources.read(query["project"], query["path"], int(query.get("line", 1))))
             elif parsed.path == "/api/chrome-review":
-                content = encoded_review(store, query["run"], query["target"], query.get("revision"))
+                content = encoded_review(store, query["run"], query.get("target"), query.get("revision"))
                 self._headers(200, "application/octet-stream", len(content), {
                     "Content-Disposition": 'attachment; filename="visualqa-review.json"'})
                 self.wfile.write(content)

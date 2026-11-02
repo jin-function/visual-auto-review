@@ -167,7 +167,7 @@ class ServiceTests(unittest.TestCase):
 
     def test_failed_recalculation_preserves_committed_revision(self):
         run = self.start(); old = self.store.result(run["id"], "mobile")
-        with patch("qa.service.compare", side_effect=RuntimeError("test failure")):
+        with patch("qa.revisions.compare", side_effect=RuntimeError("test failure")):
             self.service.recalculate(run["id"], "mobile", 1, "실패 검증"); self.wait()
         self.assertEqual(self.store.result(run["id"], "mobile")["id"], old["id"])
         self.assertIn("재계산 실패", self.store.run(run["id"])["targets"]["mobile"]["error"])
