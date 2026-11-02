@@ -47,6 +47,7 @@ HTML은 현재 DOM 사본을 내보내므로 원본 HTML의 들여쓰기까지 �
 - 원본 CSS의 CRLF·들여쓰기·주석·파일명과 검수 도구 제거.
 - macOS 앱 빌드·서명 검증과 소스 파일 일치 확인.
 
-로컬 브라우저 검증 환경은 macOS Intel, Node 22.21.0, Python 3.12, Chrome for Testing 149.0.7827.55입니다.
-GitHub Actions에는 Windows·macOS·Linux 단위 검사와 macOS 브라우저 검사를 구성했습니다.
+로컬 브라우저 검증 환경은 macOS Intel, Node 22.21.0, Python 3.12이며 Chrome for Testing 149.0.7827.55와 156.0.8078.80에서 전체 흐름을 통과했습니다.
+GitHub Actions에는 Windows·macOS·Linux 단위 검사와 Linux 가상 화면의 Chrome 검사를 구성했습니다.
+화면 없는 Mac의 최신 Chrome에서 시작·탐색이 간헐적으로 멈추는 현상을 확인하여 원격 확장 검사는 가상 화면에서 실행합니다.
 Windows에서의 실제 Chrome 조작은 로컬 검증 범위에 포함하지 않았습니다.

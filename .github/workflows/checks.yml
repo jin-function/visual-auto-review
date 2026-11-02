@@ -29,7 +29,7 @@ jobs:
       - run: node --test tests/extension.test.mjs
       - run: python tests/chrome_handoff_integration.py
   browser:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       PYTHONPATH: app
@@ -46,5 +46,5 @@ jobs:
       - run: python -m pip install -r requirements.txt
       - run: python tools/fetch_test_chrome.py --destination "${{ runner.temp }}/qa-chrome" --env-file "$GITHUB_ENV"
       - run: python tests/launcher_integration.py
-      - run: node tests/extension_integration.mjs
-      - run: node tests/extension_integration.mjs --stale-manifest
+      - run: xvfb-run -a node tests/extension_integration.mjs --headed
+      - run: xvfb-run -a node tests/extension_integration.mjs --headed --stale-manifest

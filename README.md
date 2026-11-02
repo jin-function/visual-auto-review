@@ -110,4 +110,5 @@ node tests/extension_integration.mjs
 node tests/extension_integration.mjs --stale-manifest
 ```
 
-GitHub Actions에서 Windows·macOS·Linux 단위 검사와 macOS의 실제 브라우저 검사를 실행하도록 구성했습니다.
+이전 Chrome에서 `Target.openDevTools`를 지원하지 않으면 `--legacy-devtools`를 추가합니다.
+GitHub Actions에서 Windows·macOS·Linux 단위 검사와 Linux 가상 화면의 실제 Chrome 검사를 실행하도록 구성했습니다.

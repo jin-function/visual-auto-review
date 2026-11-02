@@ -41,7 +41,9 @@ await new Promise(resolve => foreign.listen(0, '127.0.0.1', resolve));
 const foreignURL = `http://127.0.0.1:${foreign.address().port}/external/main.css`;
 const authoredMain = "/* KEEP MAIN COMMENT */\r\n@import  './import.css';\r\n\r\n#hero {\r\n    /* KEEP DECLARATION COMMENT */\r\n    color: rgb(12, 34, 56);\r\n    padding: 12px;\r\n}\r\n";
 const authoredImport = "/* KEEP IMPORT COMMENT */\n.imported {\n\tbackground: url(\n\t    '../img/a.png'\n\t);\n}\n";
+const requests=[];
 const server = http.createServer((request, response) => {
+    requests.push({url:request.url,time:Date.now()});
     if (request.url === '/css/main.css') { response.setHeader('Content-Type', 'text/css'); response.end(authoredMain); }
     else if (request.url === '/css/import.css') { response.setHeader('Content-Type', 'text/css'); response.end(authoredImport); }
     else if (request.url === '/html/page.html') {
@@ -68,8 +70,9 @@ const review = {format: 'visualqa.chrome-review', version: 2, imageRole: 'refere
         {id: 'difference-2', title: '하단 영역 차이', rect: {x: 0, y: 1000, width: 80, height: 80}, selectors: ['section']} ]};
 const chromePath = process.env.VISUAL_QA_TEST_CHROME;
 if (!chromePath || !fs.existsSync(chromePath)) throw new Error('VISUAL_QA_TEST_CHROME에 Chrome for Testing 실행 파일을 지정하세요.');
-const chrome = spawn(chromePath, [...(process.argv.includes('--headed') ? [] : ['--headless=new']), '--no-first-run', '--no-default-browser-check', '--remote-debugging-port=0', '--window-size=1200,1000',
-    '--auto-open-devtools-for-tabs', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', `--user-data-dir=${path.join(temp, 'profile')}`, `--load-extension=${extension}`, `--disable-extensions-except=${extension}`, 'about:blank'], {stdio: ['ignore', 'ignore', 'pipe']});
+const chrome = spawn(chromePath, [...(process.argv.includes('--headed') ? [] : ['--headless=new']), '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--remote-debugging-port=0', '--window-size=1200,1000',
+    ...(process.argv.includes('--legacy-devtools') ? ['--auto-open-devtools-for-tabs'] : []),
+    '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', `--user-data-dir=${path.join(temp, 'profile')}`, `--load-extension=${extension}`, `--disable-extensions-except=${extension}`, 'about:blank'], {stdio: ['ignore', 'ignore', 'pipe']});
 let errors = '', socket, sequence = 0; chrome.stderr.on('data', data => errors = (errors + data).slice(-3000));
 const pending = new Map(), events = [];
 function send(method, params = {}, sessionId) {
@@ -108,11 +111,18 @@ try {
         await evaluate(seedSession, `new Promise((resolve,reject)=>{const request=indexedDB.open('visualqa-reviews',1);request.onupgradeneeded=()=>request.result.createObjectStore('reviews',{keyPath:'id'});request.onerror=()=>reject(request.error);request.onsuccess=()=>{const db=request.result;const tx=db.transaction(['reviews'],'readwrite');tx.objectStore('reviews').put(${JSON.stringify(oldReview)});tx.oncomplete=()=>{db.close();resolve(true);};tx.onerror=()=>reject(tx.error);};})`);
         await send('Target.detachFromTarget',{sessionId:seedSession});
     }
-    const {targetId} = await send('Target.createTarget', {url});
+    const {targetId} = await send('Target.createTarget', {url:'about:blank'});
     const page = await attach(targetId);
     await send('Runtime.enable', {}, page); await send('Page.enable', {}, page); await send('DOM.enable', {}, page); await send('CSS.enable', {}, page);
     await send('Emulation.setDeviceMetricsOverride', {width: 780, height: 600, deviceScaleFactor: 1, mobile: false}, page);
-    await until(() => evaluate(page, `document.readyState === 'complete' && !!document.querySelector('#hero')`), 'fixture page', 45000);
+    await send('Page.navigate',{url},page).catch(async error=>{
+        const state=await evaluate(page,`({url:location.href,ready:document.readyState,html:document.documentElement.outerHTML.slice(0,2000)})`).catch(String);
+        throw new Error(`${error.message}: ${JSON.stringify({state,requests,pageEvents:events.filter(event=>event.sessionId===page&&event.method.startsWith('Page.')).slice(-12)})}`);
+    });
+    await until(() => evaluate(page, `document.readyState === 'complete' && !!document.querySelector('#hero')`), 'fixture page', 45000).catch(async error=>{
+        const state=await evaluate(page,`({url:location.href,ready:document.readyState,html:document.documentElement.outerHTML.slice(0,2000)})`).catch(String);
+        throw new Error(`${error.message}: ${JSON.stringify(state)}`);
+    });
     const heightBefore = await evaluate(page, 'document.documentElement.scrollHeight');
     if (staleManifest) {
         const workerSession = await attach(worker.targetId); await send('Runtime.enable', {}, workerSession);
@@ -140,7 +150,11 @@ try {
     let devtools;
     // Explicit opening is supported by current Chrome; older releases use the startup flag.
     try { await send('Target.openDevTools',{targetId,panelId:'elements'}); }
-    catch (error) { if (!/wasn't found|not found|Unknown method/.test(error.message)) throw error; }
+    catch (error) {
+        if (!/wasn't found|not found|Unknown method/.test(error.message) || !process.argv.includes('--legacy-devtools')) {
+            throw new Error(`${error.message}. For Chrome without Target.openDevTools use --legacy-devtools.`);
+        }
+    }
     await until(async () => {
         for (const target of (await targets()).filter(target => target.url === extensionOrigin + '/devtools.html')) {
             const session = await attach(target.targetId);
@@ -155,20 +169,26 @@ try {
     // Chrome's own test hook renders menus inside the temporary frontend rather than macOS menus.
     await evaluate(frontSession, 'InspectorFrontendAPI.setUseSoftMenu(true)');
     await send('Emulation.setDeviceMetricsOverride', {width: 3000, height: 1100, deviceScaleFactor: 1, mobile: false}, frontSession);
-    await pause(700);
-    const panelTab = await evaluate(frontSession, `(()=>{let found;function visit(root){for(const node of root.querySelectorAll('*')){if(node.getAttribute('role')==='tab'&&node.textContent.includes('시안 검수')&&node.getBoundingClientRect().width)found=node;if(node.shadowRoot)visit(node.shadowRoot);}}visit(document);if(found){const r=found.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};}return null;})()`);
-    console.log('Panel tab:', JSON.stringify(panelTab));
-    if(panelTab){await send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...panelTab},frontSession);await send('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...panelTab},frontSession);}
-    const dropdown = !panelTab && await evaluate(frontSession, `(()=>{let found;function visit(root){for(const node of root.querySelectorAll('*')){if(!found&&node.getAttribute('aria-label')==='More tabs'&&node.getBoundingClientRect().width)found=node;if(node.shadowRoot)visit(node.shadowRoot);}}visit(document);if(found){const r=found.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};}return null;})()`);
-    if (dropdown) {
-        await send('Input.dispatchMouseEvent', {type:'mousePressed',button:'left',clickCount:1,...dropdown}, frontSession);
-        await send('Input.dispatchMouseEvent', {type:'mouseReleased',button:'left',clickCount:1,...dropdown}, frontSession);
-        await pause(500);
-        const menu = await evaluate(frontSession, `(()=>{let found;function visit(root){for(const node of root.querySelectorAll('*')){if(node.textContent==='시안 검수' && node.getBoundingClientRect().width)found=node;if(node.shadowRoot)visit(node.shadowRoot);}}visit(document);if(found){const r=found.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};}return null;})()`);
-        console.log('Menu item:', JSON.stringify(menu));
-        if(menu){await send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...menu},frontSession);await send('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...menu},frontSession);}
+    async function frontendClick(point) {
+        await send('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...point},frontSession);
+        await send('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...point},frontSession);
     }
-    const panelTarget = await until(async () => (await targets()).find(target => target.url.startsWith(extensionOrigin + '/workspace.html')), 'review panel');
+    const panelTarget = await until(async () => {
+        const loaded=(await targets()).find(target=>target.url.startsWith(extensionOrigin+'/workspace.html')&&(!target.parentId||target.parentId===devtoolsParent));
+        if(loaded)return loaded;
+        const panelTab=await evaluate(frontSession,`(()=>{let found;function visit(root){for(const node of root.querySelectorAll('*')){if(node.getAttribute('role')==='tab'&&node.textContent.includes('시안 검수')&&node.getBoundingClientRect().width)found=node;if(node.shadowRoot)visit(node.shadowRoot);}}visit(document);if(found){const r=found.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};}return null;})()`);
+        if(panelTab){await frontendClick(panelTab);return false;}
+        const dropdown=await evaluate(frontSession,`(()=>{let found;function visit(root){for(const node of root.querySelectorAll('*')){if(!found&&node.getAttribute('aria-label')==='More tabs'&&node.getBoundingClientRect().width)found=node;if(node.shadowRoot)visit(node.shadowRoot);}}visit(document);if(found){const r=found.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};}return null;})()`);
+        if(!dropdown)return false;
+        await frontendClick(dropdown);await pause(300);
+        const menu=await evaluate(frontSession,`(()=>{let found;function visit(root){for(const node of root.querySelectorAll('*')){if(node.textContent==='시안 검수'&&node.getBoundingClientRect().width)found=node;if(node.shadowRoot)visit(node.shadowRoot);}}visit(document);if(found){const r=found.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};}return null;})()`);
+        if(menu)await frontendClick(menu);
+        else {
+            await send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape'},frontSession);
+            await send('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape'},frontSession);
+        }
+        return false;
+    },'review panel',45000);
     const panel = await attach(panelTarget.targetId); await send('Runtime.enable', {}, panel);
     await until(() => evaluate(panel, `!!document.querySelector('#import')`), 'panel initialized');
     await evaluate(panel, `globalThis.__nativeSidePanel=chrome.sidePanel;Object.defineProperty(chrome,'sidePanel',{value:undefined,configurable:true});`);
