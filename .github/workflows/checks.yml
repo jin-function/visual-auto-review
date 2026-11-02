@@ -35,8 +35,7 @@ jobs:
       PYTHONPATH: app
       PYTHONDONTWRITEBYTECODE: '1'
       VISUAL_QA_TEST_PYTHON: python
-      # Reuse the runner's installed Chrome sandbox for downloaded testing builds.
-      CHROME_DEVEL_SANDBOX: /opt/google/chrome/chrome-sandbox
+      CHROME_DEVEL_SANDBOX: /usr/local/sbin/visualqa-test-sandbox
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -46,8 +45,10 @@ jobs:
         with:
           node-version: '22'
       - run: python -m pip install -r requirements.txt
-      - run: test -u "$CHROME_DEVEL_SANDBOX"
       - run: python tools/fetch_test_chrome.py --destination "${{ runner.temp }}/qa-chrome" --env-file "$GITHUB_ENV"
+      # https://chromium.googlesource.com/chromium/src/+/main/docs/linux/suid_sandbox_development.md
+      - name: Configure the official Chrome sandbox helper
+        run: sudo install -o root -g root -m 4755 "$(dirname "$VISUAL_QA_TEST_CHROME")/chrome_sandbox" "$CHROME_DEVEL_SANDBOX"
       - run: python tests/launcher_integration.py
       - run: xvfb-run -a node tests/extension_integration.mjs --headed
       - run: xvfb-run -a node tests/extension_integration.mjs --headed --stale-manifest
