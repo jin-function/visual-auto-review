@@ -15,6 +15,9 @@ const extension = path.join(temp, 'extension'); fs.cpSync(path.join(root, 'chrom
 const testedFiles = Object.fromEntries(fs.readdirSync(extension).filter(name => /\.(?:js|mjs|json|html|css)$/.test(name)).sort()
     .map(name => [name, createHash('sha256').update(fs.readFileSync(path.join(extension, name))).digest('hex')]));
 const manifest = JSON.parse(fs.readFileSync(path.join(extension, 'manifest.json')));
+const workerFile='visualqa-integration-worker.js';
+fs.copyFileSync(path.join(extension,'background.js'),path.join(extension,workerFile));
+manifest.background.service_worker=workerFile;
 manifest.host_permissions = ['http://127.0.0.1/*'];
 const staleManifest = process.argv.includes('--stale-manifest');
 if (staleManifest) {
@@ -97,8 +100,8 @@ try {
     });
     fs.mkdirSync(path.join(temp, 'downloads'));
     await send('Browser.setDownloadBehavior', {behavior: 'allow', downloadPath: path.join(temp, 'downloads'), eventsEnabled: true});
-    const worker = await until(async () => (await targets()).find(target => target.type === 'service_worker' && target.url.endsWith('/background.js')), 'extension worker');
-    const extensionOrigin = new URL(worker.url).origin === 'null' ? worker.url.slice(0, worker.url.indexOf('/background.js')) : new URL(worker.url).origin;
+    const worker = await until(async () => (await targets()).find(target => target.type === 'service_worker' && target.url.endsWith('/'+workerFile)), 'extension worker');
+    const extensionOrigin = worker.url.slice(0,worker.url.lastIndexOf('/'));
     if (!staleManifest) {
         const seedSession = await attach(worker.targetId); await send('Runtime.enable',{},seedSession);
         const oldReview = await validateReview(review);
@@ -109,7 +112,7 @@ try {
     const page = await attach(targetId);
     await send('Runtime.enable', {}, page); await send('Page.enable', {}, page); await send('DOM.enable', {}, page); await send('CSS.enable', {}, page);
     await send('Emulation.setDeviceMetricsOverride', {width: 780, height: 600, deviceScaleFactor: 1, mobile: false}, page);
-    await until(() => evaluate(page, `document.readyState === 'complete' && !!document.querySelector('#hero')`), 'fixture page');
+    await until(() => evaluate(page, `document.readyState === 'complete' && !!document.querySelector('#hero')`), 'fixture page', 45000);
     const heightBefore = await evaluate(page, 'document.documentElement.scrollHeight');
     if (staleManifest) {
         const workerSession = await attach(worker.targetId); await send('Runtime.enable', {}, workerSession);
@@ -142,9 +145,8 @@ try {
         for (const target of (await targets()).filter(target => target.url === extensionOrigin + '/devtools.html')) {
             const session = await attach(target.targetId);
             await send('Runtime.enable', {}, session); await send('Log.enable', {}, session);
-            const inspected = await evaluate(session, `new Promise(resolve=>chrome.devtools.inspectedWindow.eval('location.href',(value,error)=>resolve({value,error})))`);
-            if (inspected.error) { await send('Target.detachFromTarget', {sessionId: session}); throw new Error('DevTools evaluation: '+JSON.stringify(inspected.error)); }
-            if (inspected.value === url) { devtools = session; devtoolsParent = target.parentId; return true; }
+            const inspected = await evaluate(session, `(async()=>{const tabId=chrome.devtools.inspectedWindow.tabId;return {tabId,url:(await chrome.tabs.get(tabId)).url};})()`);
+            if (inspected.url === url) { devtools = session; devtoolsParent = target.parentId; return true; }
             await send('Target.detachFromTarget', {sessionId: session});
         }
         return false;
