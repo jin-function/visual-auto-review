@@ -7,6 +7,8 @@ import subprocess
 import sys
 import tempfile
 import threading
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 if platform.system() != 'Darwin':
@@ -42,16 +44,22 @@ with tempfile.TemporaryDirectory(prefix='visualqa-webkit-') as directory:
                 address = value.get('url')
             destination = temporary / 'visualqa-review.json'
             config = temporary / 'config.json'
-            config.write_text(json.dumps({'url': address, 'destination': str(destination)}), encoding='utf-8')
+            config.write_text(json.dumps({'url': address, 'destination': str(destination), 'checks': str(root / 'tests/app_view_checks.js')}), encoding='utf-8')
             completed = subprocess.run([str(executable), str(config)], capture_output=True, text=True, encoding='utf-8', timeout=60)
             assert completed.returncode == 0, completed.stdout + completed.stderr
             package = json.loads(destination.read_text(encoding='utf-8'))
             assert package['version'] == 3
             assert {target['device'] for target in package['targets']} == {'pc', 'mo'}
-            assert destination.read_bytes() == (temporary / 'api.json').read_bytes()
+            parsed = urllib.parse.urlsplit(address)
+            origin = f'{parsed.scheme}://{parsed.netloc}'
+            token = urllib.parse.parse_qs(parsed.query)['token'][0]
+            request = urllib.request.Request(origin + '/api/chrome-review?run=' + package['runId'], headers={'X-VisualQA': token, 'Origin': origin})
+            with urllib.request.urlopen(request, timeout=15) as response:
+                assert destination.read_bytes() == response.read()
             print(json.dumps({'status': 'PASS', 'checks': ['production WKWebView navigation policy', 'actual app export button',
                 'external navigation blocked', 'blob navigation without download blocked', 'native JSON download completes',
-                'original filename', 'PC and MO in saved JSON', 'downloaded bytes match API']}))
+                'original filename', 'PC and MO in saved JSON', 'downloaded bytes match API',
+                'exclusive image tabs and keyboard navigation', 'hidden tools and parked source editing', 'finding navigation and judgment persistence']}))
         finally:
             server.stdin.close()
             try:

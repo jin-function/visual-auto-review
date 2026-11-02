@@ -72,7 +72,7 @@
                     </h2>
                     <p>
                         페이지 주소와 시안을 한 번 등록하세요.
-                        검수 판단과 보정 이력은 다음 검수에도 이어집니다.
+                        검수 판단과 이전 결과는 다음 검수에도 이어집니다.
                     </p>
                     <button id="welcome-new" class="primary" type="button">
                         프로젝트 등록
@@ -114,7 +114,7 @@
                                 </label>
                                 <select id="revision-select">
                                 </select>
-                                <button id="open-html-source" type="button">
+                                <button id="open-html-source" type="button" data-app-feature="sourceEditing" hidden>
                                     HTML 열기
                                 </button>
                                 <button id="chrome-review" type="button">
@@ -141,13 +141,13 @@
                                 </select>
                                 <label class="check">
                                     <input id="sync-scroll" type="checkbox" checked>
-                                    스크롤 연결
+                                    탭 간 위치 연결
                                 </label>
                             </div>
                         </div>
                         <p class="source-hint">
-                            차이 이미지의 위치나 차이 항목을 누르면 해당 요소의 소스로 이동합니다.
-                            Chrome에서 실시간으로 수정하려면 검수 파일을 저장한 뒤 ‘시안 검수’ 확장 도구에서 불러오세요.
+                            차이가 있는 이미지 위치나 차이 항목을 누르면 해당 위치와 판단 기록을 확인합니다.
+                            실제 페이지의 시각 비교와 HTML·CSS 수정은 Chrome 확장 도구에서 진행하세요.
                         </p>
                         <div class="review-layout">
                             <aside class="findings-panel">
@@ -177,7 +177,18 @@
                                 </div>
                             </aside>
                             <div class="image-comparison">
-                                <div class="image-panel">
+                                <div id="image-tabs" class="tabs image-tabs" role="tablist" aria-label="검수 이미지 보기">
+                                    <button id="reference-tab" class="active" type="button" role="tab" aria-selected="true" aria-controls="reference-panel" data-image-view="reference">
+                                        기준 시안
+                                    </button>
+                                    <button id="actual-tab" type="button" role="tab" aria-selected="false" aria-controls="actual-panel" tabindex="-1" data-image-view="actual">
+                                        실제 캡처
+                                    </button>
+                                    <button id="diff-tab" type="button" role="tab" aria-selected="false" aria-controls="diff-panel" tabindex="-1" data-image-view="diff">
+                                        차이 강조
+                                    </button>
+                                </div>
+                                <section id="reference-panel" class="image-panel" role="tabpanel" aria-labelledby="reference-tab" tabindex="0">
                                     <div class="image-heading">
                                         <strong>
                                             기준 시안
@@ -191,8 +202,8 @@
                                             </div>
                                         </div>
                                     </div>
-                                </div>
-                                <div class="image-panel">
+                                </section>
+                                <section id="actual-panel" class="image-panel" role="tabpanel" aria-labelledby="actual-tab" tabindex="0" hidden>
                                     <div class="image-heading">
                                         <strong>
                                             실제 캡처
@@ -206,8 +217,8 @@
                                             </div>
                                         </div>
                                     </div>
-                                </div>
-                                <div class="image-panel">
+                                </section>
+                                <section id="diff-panel" class="image-panel" role="tabpanel" aria-labelledby="diff-tab" tabindex="0" hidden>
                                     <div class="image-heading">
                                         <strong>
                                             차이 강조
@@ -221,7 +232,7 @@
                                             </div>
                                         </div>
                                     </div>
-                                </div>
+                                </section>
                             </div>
                         </div>
                         <section id="finding-detail" class="detail-card" hidden>
@@ -234,7 +245,7 @@
                                     </h2>
                                 </div>
                                 <span id="finding-location" class="muted"></span>
-                                <button id="edit-finding-source" type="button">
+                                <button id="edit-finding-source" type="button" data-app-feature="sourceEditing" hidden>
                                     해당 요소 수정
                                 </button>
                             </div>
@@ -286,7 +297,7 @@
                             <div id="related-elements">
                             </div>
                         </section>
-                        <details class="detail-card">
+                        <details id="alignment-section" class="detail-card" hidden>
                             <summary>
                                 위치 보정과 재계산
                             </summary>
@@ -308,7 +319,7 @@
                                 </button>
                             </form>
                         </details>
-                        <details class="detail-card">
+                        <details id="capture-details" class="detail-card" hidden>
                             <summary>
                                 구간별 수치와 캡처 정보
                             </summary>
@@ -371,7 +382,7 @@
                 </label>
                 <select id="mo-overlay-target">
                 </select>
-                <details id="source-connection" class="settings-details">
+                <details id="source-connection" class="settings-details" data-app-feature="sourceEditing" hidden>
                     <summary>
                         편집할 소스 연결
                     </summary>

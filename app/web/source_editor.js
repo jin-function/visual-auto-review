@@ -1,5 +1,6 @@
 /* Source editing stays beside the visual evidence. No generated page is edited. */
 (() => {
+    if (!window.VisualQAFeatures?.sourceEditing) return;
     const editor = {doc:null, links:[], elements:[], dirty:false, generation:0, busy:false, project:null, inspecting:false,pending:null};
     const field = id => document.getElementById(id);
     function status(message, error=false) {

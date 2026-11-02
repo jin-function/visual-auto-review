@@ -7,6 +7,7 @@ final class DownloadProbe: NSObject, NSApplicationDelegate, WKNavigationDelegate
     var clicked = false
     var finished = false
     var boundaryStage = 0
+    var viewChecks = ""
 
     func finish(_ status: String, _ message: String) {
         guard !finished else { return }
@@ -24,6 +25,7 @@ final class DownloadProbe: NSObject, NSApplicationDelegate, WKNavigationDelegate
             let config = try JSONSerialization.jsonObject(with: data) as! [String: String]
             let address = URL(string: config["url"]!)!
             destination = URL(fileURLWithPath: config["destination"]!)
+            viewChecks = try String(contentsOfFile: config["checks"]!, encoding: .utf8)
             policy.origin = address
             let configuration = WKWebViewConfiguration()
             configuration.websiteDataStore = .nonPersistent()
@@ -67,17 +69,14 @@ final class DownloadProbe: NSObject, NSApplicationDelegate, WKNavigationDelegate
     }
 
     func clickExport(_ webView: WKWebView) {
-        webView.evaluateJavaScript("""
-            (() => {
-                const timer = setInterval(() => {
-                    const button = document.querySelector('#chrome-review');
-                    if (button && !button.disabled && !document.querySelector('#result').hidden) {
-                        clearInterval(timer);
-                        button.click();
-                    }
-                }, 100);
-            })()
-            """, completionHandler: nil)
+        webView.callAsyncJavaScript(viewChecks, arguments: [:], in: nil, in: .page) { result in
+            switch result {
+            case .success:
+                webView.evaluateJavaScript("document.querySelector('#chrome-review').click()", completionHandler: nil)
+            case .failure(let error):
+                self.finish("FAIL", error.localizedDescription)
+            }
+        }
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {

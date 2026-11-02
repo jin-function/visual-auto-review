@@ -1,11 +1,17 @@
 'use strict';
+// Preserve the app editor for later reuse; live source edits currently use Chrome.
+window.VisualQAFeatures = Object.freeze({sourceEditing: false});
 const $ = id => document.getElementById(id);
+for (const entry of document.querySelectorAll('[data-app-feature]')) entry.hidden = !VisualQAFeatures[entry.dataset.appFeature];
 const token = new URL(location.href).searchParams.get('token') || sessionStorage.getItem('visualqa-session');
 if (token) sessionStorage.setItem('visualqa-session', token);
 history.replaceState(null, '', '/');
 const state = { projects: [], runs: [], profile: null, project: null, run: null, target: null, result: null, finding: null, edit: null, uploading: 0 };
 const labels = { queued:'대기', running:'진행 중', capturing:'캡처 중', comparing:'비교 중', complete:'완료', partial:'일부 완료', failed:'실패', interrupted:'중단', pending:'확인 필요', fix:'수정 필요', intentional:'의도된 차이', resolved:'해결' };
-let toastTimer, syncing = false, pollBusy = false;
+let toastTimer, pollBusy = false;
+const imageViews = ['reference', 'actual', 'diff'];
+let activeImageView = 'reference';
+const imagePositions = new Map();
 
 function element(tag, text, className) {
     const node = document.createElement(tag);
@@ -135,12 +141,14 @@ function renderResult() {
     if(h.previous_run){
         $('history-summary').append(element('span',h.compatible?`이전 비교 대비 신규 ${h.new.length}개 · 같은 위치 ${h.persisting.length}개 · 이번에 검출되지 않음 ${h.not_detected.length}개. `:'시안 또는 비교 조건이 변경되어 이전 판단을 자동으로 이어받지 않았습니다. '));
         const link=element('a','이전 결과 보기');link.href='#';link.addEventListener('click',action(async e=>{e.preventDefault();await selectRun(h.previous_run,state.target,h.previous_revision);}));$('history-summary').append(link);
-    }else $('history-summary').textContent='이 프로젝트의 첫 비교입니다. 판단과 보정값을 기록하면 다음 검수에서 확인할 수 있습니다.';
+    }else $('history-summary').textContent='이 프로젝트의 첫 비교입니다. 판단을 기록하면 다음 검수에서 확인할 수 있습니다.';
     const base=`/files/${result.run_id}/${result.target_id}/${result.id}`;
     for(const type of ['reference','actual','diff'])$(type+'-image').src=`${base}/${type}.png`;
     $('alignment-y').value=result.y_offset;$('alignment-reason').value='';
     $('finding-detail').hidden=true;
-    renderFindings();applyZoom();
+    renderFindings();
+    imagePositions.clear();
+    selectImageView(activeImageView, false, true);
     const table=element('table');const head=element('thead'),row=element('tr');
     for(const title of ['범위','차이 픽셀','차이율','평균 색상 차이'])row.append(element('th',title));head.append(row);table.append(head);
     const body=element('tbody');for(const s of result.strips){const r=element('tr');for(const v of [`${s.top}~${s.bottom}px`,s.changed_pixels.toLocaleString(),percent(s.changed_ratio),s.mean_delta.toFixed(2)])r.append(element('td',v));body.append(r);}table.append(body);$('strip-table').replaceChildren(table);
@@ -167,7 +175,7 @@ function selectFinding(findingId, openSource=true){
     const r=finding.rect;$('finding-location').textContent=`X ${r.x} · Y ${r.y} · ${r.width} × ${r.height}px`;
     $('review-status').value=review.status||'pending';$('review-severity').value=review.severity||finding.suggested_severity;$('review-note').value=review.note||'';
     $('previous-review').textContent=finding.previous_review&&!review.updated_at?`이전 메모: ${finding.previous_review.note||'(메모 없음)'} · 증거가 변경되어 다시 확인해야 합니다.`:review.updated_at?`마지막 저장 ${date(review.updated_at)}`:'';
-    $('related-elements').replaceChildren(...finding.elements.map(item=>{const box=element('div',undefined,'element');box.append(element('code',item.selector),element('p',item.text||'(텍스트 없음)'),element('p',Object.entries(item.styles).map(([k,v])=>`${k}: ${v}`).join(' · ')));const edit=element('button','이 요소 수정');edit.type='button';edit.addEventListener('click',()=>window.SourceEditor?.select([item]));box.append(edit);return box;}));
+    $('related-elements').replaceChildren(...finding.elements.map(item=>{const box=element('div',undefined,'element');box.append(element('code',item.selector),element('p',item.text||'(텍스트 없음)'),element('p',Object.entries(item.styles).map(([k,v])=>`${k}: ${v}`).join(' · ')));if(VisualQAFeatures.sourceEditing){const edit=element('button','이 요소 수정');edit.type='button';edit.addEventListener('click',()=>window.SourceEditor?.select([item]));box.append(edit);}return box;}));
     if(!finding.elements.length)$('related-elements').append(element('p','연결된 요소가 없습니다. 누락·추가 영역 또는 수집 범위 밖의 차이일 수 있습니다.','muted'));
     markRegion(true);
     if(changed&&openSource)window.SourceEditor?.select(finding.elements);
@@ -176,9 +184,10 @@ function applyZoom(){
     if(!state.result)return;
     const width=state.result.metrics.width;
     const choice=$('zoom').value;
+    const fitWidth = Math.max(1, $(activeImageView+'-scroll').clientWidth);
     for(const scroll of document.querySelectorAll('.image-scroll')){
         const image=scroll.querySelector('img'),stage=scroll.querySelector('.image-stage');
-        const display=choice==='fit'?Math.max(1,scroll.clientWidth):width*Number(choice);
+        const display=choice==='fit'?fitWidth:width*Number(choice);
         image.style.width=`${display}px`;stage.style.width=`${display}px`;
     }
     markRegion(false);
@@ -187,15 +196,54 @@ function markRegion(scrollToRegion){
     const finding=currentFinding();
     for(const scroll of document.querySelectorAll('.image-scroll')){
         const marker=scroll.querySelector('.region-marker');marker.hidden=!finding;if(!finding)continue;
+        if(scroll.closest('[role="tabpanel"]').hidden)continue;
         const scale=scroll.querySelector('img').getBoundingClientRect().width/state.result.metrics.width;
         const r=finding.rect;Object.assign(marker.style,{left:`${r.x*scale}px`,top:`${r.y*scale}px`,width:`${Math.max(3,r.width*scale)}px`,height:`${Math.max(3,r.height*scale)}px`});
         if(scrollToRegion){scroll.scrollTop=Math.max(0,r.y*scale-60);scroll.scrollLeft=Math.max(0,r.x*scale-20);}
     }
 }
-for(const scroll of document.querySelectorAll('.image-scroll'))scroll.addEventListener('scroll',()=>{
-    if(syncing||!$('sync-scroll').checked)return;syncing=true;
-    for(const other of document.querySelectorAll('.image-scroll'))if(other!==scroll){other.scrollTop=scroll.scrollTop;other.scrollLeft=scroll.scrollLeft;}
-    requestAnimationFrame(()=>{syncing=false;});
+function selectImageView(type, focus = false, reset = false) {
+    if (!imageViews.includes(type)) return;
+    const previous = $(activeImageView+'-scroll');
+    const position = {top:previous.scrollTop, left:previous.scrollLeft};
+    if (!reset) imagePositions.set(activeImageView, position);
+    activeImageView = type;
+    for (const view of imageViews) {
+        const selected = view === type, tab = $(view+'-tab');
+        tab.classList.toggle('active', selected);
+        tab.setAttribute('aria-selected', String(selected));
+        tab.tabIndex = selected ? 0 : -1;
+        $(view+'-panel').hidden = !selected;
+    }
+    applyZoom();
+    const next = $(type+'-scroll');
+    const target = reset ? {top:0,left:0} : $('sync-scroll').checked ? position : imagePositions.get(type) || {top:0,left:0};
+    next.scrollTop = target.top; next.scrollLeft = target.left;
+    if (focus) $(type+'-tab').focus();
+}
+for (const type of imageViews) {
+    $(type+'-tab').addEventListener('click', () => selectImageView(type));
+    $(type+'-scroll').addEventListener('scroll', () => {
+        if (type === activeImageView) imagePositions.set(type, {top:$(type+'-scroll').scrollTop,left:$(type+'-scroll').scrollLeft});
+    });
+    if (!VisualQAFeatures.sourceEditing) $(type+'-image').addEventListener('click', event => {
+        if (!state.result) return;
+        const box = event.currentTarget.getBoundingClientRect();
+        if (!box.width) return;
+        const x = (event.clientX-box.left)*state.result.metrics.width/box.width;
+        const y = (event.clientY-box.top)*state.result.metrics.width/box.width;
+        const finding = state.result.findings.filter(f=>x>=f.rect.x&&x<f.rect.x+f.rect.width&&y>=f.rect.y&&y<f.rect.y+f.rect.height)
+            .sort((a,b)=>a.rect.width*a.rect.height-b.rect.width*b.rect.height)[0];
+        if (finding) selectFinding(finding.id, false);
+    });
+}
+$('image-tabs').addEventListener('keydown', event => {
+    const tab = event.target.closest('[data-image-view]');
+    if (!tab) return;
+    const index = imageViews.indexOf(tab.dataset.imageView);
+    const next = event.key === 'ArrowRight' ? (index+1)%imageViews.length : event.key === 'ArrowLeft' ? (index+imageViews.length-1)%imageViews.length : event.key === 'Home' ? 0 : event.key === 'End' ? imageViews.length-1 : null;
+    if (next === null) return;
+    event.preventDefault(); selectImageView(imageViews[next], true);
 });
 
 function editProject(project){
