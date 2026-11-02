@@ -66,7 +66,7 @@ const review = {format: 'visualqa.chrome-review', version: 2, imageRole: 'refere
 const chromePath = process.env.VISUAL_QA_TEST_CHROME;
 if (!chromePath || !fs.existsSync(chromePath)) throw new Error('VISUAL_QA_TEST_CHROME에 Chrome for Testing 실행 파일을 지정하세요.');
 const chrome = spawn(chromePath, [...(process.argv.includes('--headed') ? [] : ['--headless=new']), '--no-first-run', '--no-default-browser-check', '--remote-debugging-port=0', '--window-size=1200,1000',
-    '--auto-open-devtools-for-tabs', `--user-data-dir=${path.join(temp, 'profile')}`, `--load-extension=${extension}`, `--disable-extensions-except=${extension}`, 'about:blank'], {stdio: ['ignore', 'ignore', 'pipe']});
+    '--auto-open-devtools-for-tabs', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', `--user-data-dir=${path.join(temp, 'profile')}`, `--load-extension=${extension}`, `--disable-extensions-except=${extension}`, 'about:blank'], {stdio: ['ignore', 'ignore', 'pipe']});
 let errors = '', socket, sequence = 0; chrome.stderr.on('data', data => errors = (errors + data).slice(-3000));
 const pending = new Map(), events = [];
 function send(method, params = {}, sessionId) {
@@ -135,6 +135,9 @@ try {
         return;
     }
     let devtools;
+    // Explicit opening is supported by current Chrome; older releases use the startup flag.
+    try { await send('Target.openDevTools',{targetId,panelId:'elements'}); }
+    catch (error) { if (!/wasn't found|not found|Unknown method/.test(error.message)) throw error; }
     await until(async () => {
         for (const target of (await targets()).filter(target => target.url === extensionOrigin + '/devtools.html')) {
             const session = await attach(target.targetId);
@@ -144,7 +147,7 @@ try {
             await send('Target.detachFromTarget', {sessionId: session});
         }
         return false;
-    }, 'DevTools extension');
+    }, 'DevTools extension', 45000);
     const frontSession = await attach(devtoolsParent); await send('Runtime.enable', {}, frontSession); await send('Log.enable', {}, frontSession);
     // Chrome's own test hook renders menus inside the temporary frontend rather than macOS menus.
     await evaluate(frontSession, 'InspectorFrontendAPI.setUseSoftMenu(true)');
@@ -547,7 +550,9 @@ try {
     }
     await verify();
 } catch (error) {
-    console.error(error.stack, errors); process.exitCode = 1;
+    console.error(error.stack, errors);
+    console.error('Test Chrome targets:',JSON.stringify((await targets().catch(()=>[])).map(({type,url,parentId})=>({type,url,parentId}))));
+    process.exitCode = 1;
     let frontend;
     if (devtoolsParent) {
         const session = await attach(devtoolsParent); await send('Runtime.enable', {}, session);
