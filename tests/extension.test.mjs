@@ -180,3 +180,79 @@ test('late responses from a previous result/revision cannot update the selected 
     assert.equal(first(),false);assert.equal(second(),true);
     window.VisualQARequests.begin('run','result');assert.equal(second(),false);
 });
+
+async function overlayLifecycle() {
+    const {createContext,runInContext}=await import('node:vm');
+    const fs=await import('node:fs/promises');
+    const listeners=new Map(),timers=new Map(),frames=new Map(),hosts=[];
+    let valid=true,listener,sequence=0,decode;
+    const invalid=()=>{if(!valid)throw new Error('Extension context invalidated.');};
+    const context=createContext({Blob,atob,innerWidth:390,innerHeight:600,devicePixelRatio:1,scrollX:0,scrollY:0,location:{href:'https://e.test/page'},
+        chrome:{runtime:{get id(){return valid?'extension':undefined;},getManifest(){invalid();return {version:'test'};},sendMessage(){invalid();return Promise.resolve();},
+            onMessage:{addListener(fn){invalid();listener=fn;},removeListener(){invalid();listener=null;}}}},
+        document:{querySelectorAll(){return hosts.filter(host=>host.isConnected);},documentElement:{append(host){host.isConnected=true;}},createElement(tag){
+            const node={style:{},setAttribute(){},remove(){this.isConnected=false;},attachShadow(){return {append(){}};},getContext(){return {setTransform(){},clearRect(){},drawImage(){}};}};
+            if(tag==='visualqa-overlay')hosts.push(node);return node;
+        }},
+        addEventListener(type,fn){listeners.set(type,fn);},removeEventListener(type){listeners.delete(type);},
+        setTimeout(fn){const id=++sequence;timers.set(id,fn);return id;},clearTimeout(id){timers.delete(id);},
+        requestAnimationFrame(fn){const id=++sequence;frames.set(id,fn);return id;},cancelAnimationFrame(id){frames.delete(id);},
+        createImageBitmap:()=>new Promise(resolve=>{decode=resolve;})});
+    for(const file of ['overlay-layout.js','content.js'])runInContext(await fs.readFile(new URL('../chrome-extension/'+file,import.meta.url),'utf8'),context);
+    const meta={reviewId:'r',packageId:'p',device:'mo',breakpoint:1024,viewportWidth:390,width:1,height:1,display:{width:1,height:1},placement:{x:0,y:0},settings:{visible:true,opacity:1,dx:0,dy:0,scale:1}};
+    return {context,meta,hosts,listeners,invalidate(){valid=false;},decode(bitmap){decode(bitmap);},
+        receive(message){return new Promise(resolve=>listener(message,{id:'extension'},resolve));},
+        flush(){for(const map of [timers,frames])for(const [id,fn] of [...map]){map.delete(id);fn();}}};
+}
+
+test('an extension reload cleans up old overlay events without synchronous runtime errors',async()=>{
+    const page=await overlayLifecycle();
+    await page.receive({type:'empty',meta:page.meta});
+    page.invalidate();
+    assert.doesNotThrow(()=>{page.listeners.get('resize')();page.flush();});
+    assert.equal(page.hosts.some(host=>host.isConnected),false);
+    assert.equal(page.listeners.size,0);
+});
+
+test('destroy remains safe after Chrome invalidates the extension context',async()=>{
+    const page=await overlayLifecycle();
+    await page.receive({type:'empty',meta:page.meta});page.invalidate();
+    assert.doesNotThrow(()=>page.context.__visualQAOverlay.destroy());
+    assert.equal(page.hosts.some(host=>host.isConnected),false);
+});
+
+test('an image finishing after an extension reload never mounts an orphan overlay',async()=>{
+    const page=await overlayLifecycle();
+    await page.receive({type:'begin',transferId:'t',meta:page.meta});
+    await page.receive({type:'chunk',transferId:'t',index:0,data:'AA=='});
+    const pending=page.receive({type:'finish',transferId:'t'});
+    page.invalidate();
+    const bitmap={width:1,height:1,closed:false,close(){this.closed=true;}};page.decode(bitmap);
+    await pending;
+    assert.equal(page.hosts.some(host=>host.isConnected),false);
+    assert.equal(bitmap.closed,true);
+});
+
+test('invalidated DevTools and panel clients stop reconnecting to an unloaded extension',async()=>{
+    const {createContext,runInContext}=await import('node:vm');
+    const fs=await import('node:fs/promises');
+    for(const file of ['devtools.js','client.mjs']) {
+        let valid=true,disconnected,sequence=0,connections=0;
+        const timers=new Map();
+        const context=createContext({URL:{revokeObjectURL(){}},
+            chrome:{runtime:{get id(){return valid?'extension':undefined;},connect(){
+                if(!valid)throw new Error('Extension context invalidated.');connections++;
+                return {postMessage(){},disconnect(){},onMessage:{addListener(){}},onDisconnect:{addListener(fn){disconnected=fn;}}};
+            }},devtools:{panels:{create(){}},inspectedWindow:{tabId:1}}},
+            setTimeout(fn){const id=++sequence;timers.set(id,fn);return id;},clearTimeout(id){timers.delete(id);},
+            setInterval(fn){const id=++sequence;timers.set(id,fn);return id;},clearInterval(id){timers.delete(id);},addEventListener(){}});
+        // Keep production connection logic; stub only its imported export/selector dependencies.
+        const source=(await fs.readFile(new URL('../chrome-extension/'+file,import.meta.url),'utf8')).replace(/^import .*;\n/gm,'').replace(/^export /gm,'');
+        runInContext(source,context);
+        if(file==='client.mjs')context.subscribe(()=>{},()=>{});
+        valid=false;
+        assert.doesNotThrow(()=>{disconnected();for(const [id,fn] of [...timers]){timers.delete(id);fn();}},file);
+        assert.equal(connections,1,file);
+        assert.equal(timers.size,0,file);
+    }
+});

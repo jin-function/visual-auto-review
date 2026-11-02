@@ -1,7 +1,11 @@
 # Visual Auto Review
 
 시안 이미지와 실제 페이지를 비교하고, Chrome에서 시안 원본을 겹쳐 보며 HTML·CSS를 수정하는 검수 도구입니다.
-검수 앱 v3.5.0과 Chrome 확장 v1.4.0을 포함합니다.
+검수 앱 v3.5.1과 Chrome 확장 v1.4.1을 포함합니다.
+
+v3.5.1은 Mac 앱의 통합 JSON 저장 실패를 수정합니다.
+Mac 앱에서는 저장 창에서 폴더를 선택하며, 기본 폴더는 다운로드입니다.
+확장 v1.4.1은 새로고침 후 페이지에 남은 코드가 발생시키는 `Extension context invalidated` 오류를 수정합니다.
 
 ## 검수 순서
 
@@ -109,6 +113,8 @@ python tests/chrome_handoff_integration.py
 node tests/extension_integration.mjs
 node tests/extension_integration.mjs --stale-manifest
 ```
+
+macOS 앱의 WebView 다운로드는 `python tests/native_download_integration.py`로 별도 검증합니다.
 
 이전 Chrome에서 `Target.openDevTools`를 지원하지 않으면 `--legacy-devtools`를 추가합니다.
 GitHub Actions에서 Windows·macOS·Linux 단위 검사와 Linux 가상 화면의 실제 Chrome 검사를 실행하도록 구성했습니다.

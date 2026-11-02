@@ -1,18 +1,30 @@
 (() => {
     const version = chrome.runtime.getManifest().version;
-    if (globalThis.__visualQAOverlay?.version === version) return;
-    globalThis.__visualQAOverlay?.destroy?.();
+    const extensionId = chrome.runtime.id;
+    if (globalThis.__visualQAOverlay?.version === version && globalThis.__visualQAOverlay.isAlive?.()) return;
+    try { globalThis.__visualQAOverlay?.destroy?.(); } catch { /* Old extension contexts cannot call Chrome APIs. */ }
     // A reloaded extension loses its old isolated context, but its DOM can remain on the page.
     for (const stale of document.querySelectorAll('visualqa-overlay[data-visualqa-extension="overlay"]')) stale.remove();
     let host, canvas, context, bitmap, transfer, meta, settings, selected, frame = 0, devtoolsReady = false;
     let destroyed = false, resizeTimer, generation = 0, paintedReviewId = null, notified = '';
     const cache = new Map();
+    function available() {
+        if (destroyed) return false;
+        try { if (chrome.runtime.id === extensionId) return true; } catch { /* Context invalidated. */ }
+        destroy(); return false;
+    }
+    function send(message) {
+        if (!available()) return;
+        try {
+            chrome.runtime.sendMessage(message).catch(() => { available(); });
+        } catch { destroy(); }
+    }
     function notify() {
         const value = status();
         const signature = JSON.stringify([value.imageState, value.reviewId, value.viewportWidth, value.settings]);
         if (signature === notified) return;
         notified = signature;
-        chrome.runtime.sendMessage({type: 'rendered'}).catch(() => {});
+        send({type: 'rendered'});
     }
     function device() { return innerWidth < (meta?.breakpoint || 1024) ? 'mo' : 'pc'; }
     function active() { return !!bitmap && !!host?.isConnected && meta?.device === device(); }
@@ -28,7 +40,7 @@
     }
     function paint() {
         frame = 0;
-        if (!canvas || !meta || !host?.isConnected) return;
+        if (!available() || !canvas || !meta || !host?.isConnected) return;
         host.setAttribute('data-visualqa-device', device());
         host.setAttribute('data-visualqa-review-id', active() ? meta.reviewId : '');
         const layout = geometry();
@@ -52,8 +64,9 @@
         }
         paintedReviewId = meta.reviewId; notify();
     }
-    function schedule() { if (!frame && !destroyed) frame = requestAnimationFrame(paint); }
+    function schedule() { if (available() && !frame) frame = requestAnimationFrame(paint); }
     function mount() {
+        if (!available()) return;
         if (host?.isConnected) return;
         for (const stale of document.querySelectorAll('visualqa-overlay[data-visualqa-extension="overlay"]')) stale.remove();
         host = document.createElement('visualqa-overlay');
@@ -74,14 +87,16 @@
         if (frame) cancelAnimationFrame(frame); frame = 0;
     }
     function viewportChanged() {
+        if (!available()) return;
         schedule();
         clearTimeout(resizeTimer);
         resizeTimer = setTimeout(() => {
-            if (!meta || destroyed) return;
-            chrome.runtime.sendMessage({type: 'viewport', width: innerWidth}).catch(() => {});
+            if (!available() || !meta) return;
+            send({type: 'viewport', width: innerWidth});
         }, 80);
     }
     async function receive(message) {
+        if (!available()) return {stale: true};
         if (message.type === 'status') return status();
         if (message.type === 'begin') {
             transfer = {id: message.transferId, meta: message.meta, generation: ++generation, chunks: [], size: 0};
@@ -105,7 +120,7 @@
             const blob = message.type === 'reuse' ? cache.get(pending.meta.reviewId) : new Blob([Uint8Array.from(atob(pending.chunks.join('')), character => character.charCodeAt(0))], {type: 'image/png'});
             const next = await createImageBitmap(blob);
             if (next.width !== pending.meta.width || next.height !== pending.meta.height) { next.close(); throw new Error('이미지 크기가 다릅니다.'); }
-            if (destroyed || pending.generation !== generation || pending.meta.device !== (innerWidth < pending.meta.breakpoint ? 'mo' : 'pc')) {
+            if (!available() || pending.generation !== generation || pending.meta.device !== (innerWidth < pending.meta.breakpoint ? 'mo' : 'pc')) {
                 next.close(); if (transfer === pending) transfer = null; return {stale: true};
             }
             if (meta?.packageId && meta.packageId !== pending.meta.packageId) cache.clear();
@@ -137,18 +152,22 @@
         throw new Error('지원하지 않는 오버레이 요청입니다.');
     }
     const listener = (message, sender, respond) => {
-        if (sender.id !== chrome.runtime.id) return false;
-        receive(message).then(respond).catch(error => { transfer = null; schedule(); respond({error: error.message}); });
+        if (!available() || sender.id !== extensionId) return false;
+        const reply = value => { try { respond(value); } catch { /* Message port closed on reload. */ } };
+        receive(message).then(reply).catch(error => { transfer = null; schedule(); reply({error: error.message}); });
         return true;
     };
     addEventListener('scroll', schedule, {passive: true});
     addEventListener('resize', viewportChanged, {passive: true});
     globalThis.visualViewport?.addEventListener('resize', viewportChanged, {passive: true});
     chrome.runtime.onMessage.addListener(listener);
-    globalThis.__visualQAOverlay = {version, destroy() {
+    function destroy() {
+        if (destroyed) return;
         destroyed = true; clearTimeout(resizeTimer); remove(); cache.clear();
         removeEventListener('scroll', schedule); removeEventListener('resize', viewportChanged);
         globalThis.visualViewport?.removeEventListener('resize', viewportChanged);
-        chrome.runtime.onMessage.removeListener(listener);
-    }};
+        try { chrome.runtime.onMessage.removeListener(listener); } catch { /* Context invalidated before cleanup. */ }
+        if (globalThis.__visualQAOverlay?.destroy === destroy) delete globalThis.__visualQAOverlay;
+    }
+    globalThis.__visualQAOverlay = {version, destroy, isAlive: available};
 })();

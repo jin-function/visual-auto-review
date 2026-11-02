@@ -39,7 +39,7 @@ with tempfile.TemporaryDirectory(prefix='visualqa-launcher-') as directory:
                     headers={'X-VisualQA': token, 'Origin': origin}), timeout=15) as response:
                     return json.load(response)
             state = api('/api/state')
-            assert state['version'] == '3.5.0' and not state['projects'] and not state['runs']
+            assert state['version'] == '3.5.1' and not state['projects'] and not state['runs']
             completed = subprocess.run([sys.executable, str(root / 'tests/integration.py'), str(ready), fixture_url],
                 env=os.environ.copy(), capture_output=True, text=True, encoding='utf-8', timeout=150)
             assert completed.returncode == 0, completed.stdout + completed.stderr

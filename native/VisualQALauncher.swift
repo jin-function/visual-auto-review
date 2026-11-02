@@ -173,8 +173,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        guard let url = navigationAction.request.url, let base = origin,
-              url.host == base.host, url.port == base.port, url.scheme == "http" else { decisionHandler(.cancel); return }
+        guard let url = navigationAction.request.url, let base = origin else { decisionHandler(.cancel); return }
+        // The app creates authenticated exports as blobs after checking the API response.
+        // Only a download from this exact local origin may use the blob scheme.
+        if url.scheme == "blob", navigationAction.shouldPerformDownload,
+           let source = URL(string: String(url.absoluteString.dropFirst(5))),
+           source.scheme == base.scheme, source.host == base.host, source.port == base.port,
+           source.user == nil, source.password == nil {
+            decisionHandler(.download)
+            return
+        }
+        guard url.host == base.host, url.port == base.port, url.scheme == "http" else { decisionHandler(.cancel); return }
         decisionHandler(navigationAction.shouldPerformDownload ? .download : .allow)
     }
 
@@ -187,7 +196,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKUI
 
     func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
         let panel = NSSavePanel(); panel.nameFieldStringValue = suggestedFilename
+        panel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
         panel.beginSheetModal(for: window) { completionHandler($0 == .OK ? panel.url : nil) }
+    }
+
+    func downloadDidFinish(_ download: WKDownload) {
+        webView.evaluateJavaScript("toast('파일을 저장했습니다.')", completionHandler: nil)
+    }
+
+    func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+        if (error as NSError).domain == NSURLErrorDomain && (error as NSError).code == NSURLErrorCancelled { return }
+        let alert = NSAlert()
+        alert.messageText = "파일을 저장하지 못했습니다."
+        alert.informativeText = error.localizedDescription
+        alert.addButton(withTitle: "확인")
+        alert.beginSheetModal(for: window) { _ in }
     }
 }
 

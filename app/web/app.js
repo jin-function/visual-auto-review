@@ -298,7 +298,7 @@ $('chrome-review').addEventListener('click',action(async()=>{
     const url=URL.createObjectURL(await response.blob());
     const a=element('a');a.href=url;a.download='visualqa-review.json';document.body.append(a);a.click();a.remove();
     setTimeout(()=>URL.revokeObjectURL(url),30000);
-    toast('PC·MO 통합 파일을 저장했습니다. Chrome 확장에서 한 번 불러오세요.');
+    toast('PC·MO 통합 파일의 저장을 요청했습니다. 저장된 JSON을 Chrome 확장에서 불러오세요.');
 }));
 $('prune-runs').addEventListener('click',action(async()=>{
     const input=prompt('완료된 검수 이력을 최근 몇 개 보관할까요? 실패·중단 이력은 유지합니다.','20');if(input===null)return;
