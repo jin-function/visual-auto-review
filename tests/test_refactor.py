@@ -148,6 +148,25 @@ class ServiceTests(unittest.TestCase):
         self.wait()
         return self.store.run(run["id"])
 
+    def test_disabled_hidden_option_keeps_legacy_comparison_history(self):
+        first = self.start()
+        result = self.store.result(first["id"], "mobile")
+        legacy_profile = {key: value for key, value in first["project"]["profile"].items() if key != "removeHidden"}
+        legacy_conditions = (self.asset["id"], 390, self.project["url"], legacy_profile, self.project["settings"])
+        result["baseline_signature"] = hashlib.sha256(str(legacy_conditions).encode()).hexdigest()
+        atomic_json(self.store.revision_path(first["id"], "mobile", result["id"]) / "result.json", result)
+        self.store.review(first["id"], "mobile", result["id"], result["findings"][0]["id"], "fix", "high", "기존 판단")
+
+        disabled = self.store.result(self.start()["id"], "mobile")
+        self.assertTrue(disabled["history"]["compatible"])
+        self.assertEqual(next(iter(disabled["reviews"].values()))["note"], "기존 판단")
+
+        self.project["profile"]["removeHidden"] = True
+        self.project = self.service.save_project(self.project)
+        enabled = self.store.result(self.start()["id"], "mobile")
+        self.assertFalse(enabled["history"]["compatible"])
+        self.assertFalse(enabled["reviews"])
+
     def test_recalculation_commits_every_output_and_keeps_original(self):
         run = self.start()
         old = self.store.result(run["id"], "mobile")

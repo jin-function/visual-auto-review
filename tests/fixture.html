@@ -52,6 +52,16 @@
                 </p>
                 <img loading="lazy" width="64" height="64" alt="지연 로딩 검증" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64'%3E%3Crect width='64' height='64' fill='%23087f74'/%3E%3C/svg%3E">
             </section>
+            <section id="capture-hidden" hidden>
+                <p>
+                    hidden 속성 제거 검증
+                </p>
+            </section>
+            <section id="capture-css-hidden" style="display: none;">
+                <p>
+                    CSS 숨김 유지 검증
+                </p>
+            </section>
         </main>
         <script>
             document.querySelector('button').addEventListener('click', event => {

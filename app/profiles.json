@@ -13,6 +13,7 @@
     "elementSelector": "h1,h2,h3,h4,h5,h6,p,li,dt,dd,img,table,details,button,a,span,strong,em,th,td,label,section,article,[class]",
     "readySelector": "body",
     "captureSelector": "",
+    "removeHidden": false,
     "settleMs": 350,
     "timeoutMs": 90000
   }

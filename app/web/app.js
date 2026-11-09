@@ -251,7 +251,10 @@ function editProject(project){
     window.SourceEditor?.reset();
     state.edit=project?structuredClone(project):{name:'',url:'',targets:[{id:'mobile',name:'모바일',enabled:true,width:390,viewport_height:844,normalize:true},{id:'pc',name:'PC',enabled:false,width:1920,viewport_height:844,normalize:true}],settings:{pixel_threshold:24,font_tolerance:1,strip_height:600},profile:structuredClone(state.profile)};
     $('dialog-title').textContent=project?'프로젝트 설정':'새 프로젝트';$('project-name-input').value=state.edit.name;$('project-url-input').value=state.edit.url;
-    $('threshold-input').value=state.edit.settings.pixel_threshold;$('tolerance-input').value=state.edit.settings.font_tolerance;$('strip-input').value=state.edit.settings.strip_height;$('profile-input').value=JSON.stringify(state.edit.profile,null,4);
+    $('threshold-input').value=state.edit.settings.pixel_threshold;$('tolerance-input').value=state.edit.settings.font_tolerance;$('strip-input').value=state.edit.settings.strip_height;
+    const {removeHidden, ...profile} = state.edit.profile;
+    $('remove-hidden-input').checked = removeHidden === true;
+    $('profile-input').value = JSON.stringify(profile, null, 4);
     state.edit.responsive ||= {breakpoint:1024};
     $('breakpoint-input').value=state.edit.responsive.breakpoint;
     $('project-error').textContent='';renderTargetFields();$('project-dialog').showModal();
@@ -309,6 +312,7 @@ $('project-form').addEventListener('submit',async event=>{
     $('save-project').disabled=true;
     try{
         state.edit.name=$('project-name-input').value;state.edit.url=$('project-url-input').value;state.edit.profile=JSON.parse($('profile-input').value);
+        state.edit.profile.removeHidden = $('remove-hidden-input').checked;
         if($('source-html-input').value.trim()&&!$('source-root-input').value.trim())throw new Error('HTML 파일과 함께 소스 폴더도 지정하세요.');
         state.edit.source=$('source-root-input').value.trim()?{root:$('source-root-input').value.trim(),html:$('source-html-input').value.trim(),url_prefix:$('source-prefix-input').value.trim()}:null;
         state.edit.responsive.breakpoint=Number($('breakpoint-input').value);

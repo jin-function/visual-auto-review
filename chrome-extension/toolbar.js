@@ -83,6 +83,10 @@
         const visibleLabel = node('label', undefined, options, {class: 'check'});
         const visible = node('input', undefined, visibleLabel, {type: 'checkbox', 'data-tool': 'visible'});
         node('span', '시안 원본 표시', visibleLabel);
+        const hiddenLabel = node('label', undefined, options, {class: 'check'});
+        const removeHidden = node('input', undefined, hiddenLabel, {type: 'checkbox', 'data-tool': 'remove-hidden', 'aria-describedby': 'remove-hidden-help'});
+        node('span', 'hidden 속성 제거', hiddenLabel);
+        node('p', '현재 페이지 미리보기에만 적용됩니다.', options, {class: 'muted', id: 'remove-hidden-help'});
         const opacityLabel = node('label', '불투명도', options);
         const opacityText = node('span', ' 40%', opacityLabel);
         const opacity = node('input', undefined, options, {type: 'range', min: '0', max: '100', 'data-tool': 'opacity'});
@@ -183,7 +187,7 @@
             });
         }
         function read() {
-            return {...current, visible: visible.checked, opacity: Number(opacity.value) / 100,
+            return {...current, visible: visible.checked, removeHidden: removeHidden.checked, opacity: Number(opacity.value) / 100,
                 dx: Number(controls.dx.value), dy: Number(controls.dy.value), scale: Number(controls.scale.value) / 100, saveAs: saveAs.checked};
         }
         async function commit() {
@@ -194,7 +198,7 @@
             return result;
         }
         function emit() { sequence++; dirty = true; opacityText.textContent = ` ${opacity.value}%`; clearTimeout(timer); timer = setTimeout(commit, 70); }
-        for (const input of [...Object.values(controls), saveAs]) input.addEventListener('input', emit);
+        for (const input of [...Object.values(controls), removeHidden, saveAs]) input.addEventListener('input', emit);
         manage.addEventListener('click', () => action('manage'));
         for (const input of [...Object.values(variantControls), breakpoint]) input.addEventListener('input', () => { variantsDirty = true; });
         applyVariants.addEventListener('click', async () => {
@@ -229,6 +233,7 @@
                     else input.value = name === 'opacity' || name === 'scale' ? current[name] * 100 : current[name];
                 }
                 opacityText.textContent = ` ${Math.round(current.opacity * 100)}%`;
+                removeHidden.checked = current.removeHidden === true;
                 saveAs.checked = current.saveAs;
             }
             registration.textContent = ['pc', 'mo'].map(device => `${device.toUpperCase()}: ${meta.availableVariants?.[device] || '미등록'}`).join('\n');

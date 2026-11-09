@@ -26,7 +26,15 @@ export function stripTooling(root, options = {}) {
     const comments = [];
     while (walker.nextNode()) if (/^\s*Code injected by (?:Five-server|live-server)\s*$/i.test(walker.currentNode.data)) comments.push(walker.currentNode);
     comments.forEach(remove);
-    for (const node of root.querySelectorAll('*')) {
+    for (const node of [root, ...root.querySelectorAll('*')]) {
+        if (!node.attributes) continue;
+        const marker = node.getAttribute('data-visualqa-export-original-hidden');
+        if (marker !== null && !node.hasAttribute('hidden')) {
+            try {
+                const original = JSON.parse(marker);
+                if (Array.isArray(original) && original.length === 2 && original.every(value => typeof value === 'string')) node.setAttribute('hidden', original[1]);
+            } catch { /* An invalid preview marker does not change the exported element. */ }
+        }
         for (const attribute of [...node.attributes]) {
             if (/^data-visualqa-export-/.test(attribute.name) && !(options.preserveSheetMarkers && attribute.name === 'data-visualqa-export-sheet')) node.removeAttribute(attribute.name);
         }

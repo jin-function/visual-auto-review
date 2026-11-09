@@ -101,6 +101,11 @@ async function main() {
     })()`, true);
     // This is the original accordion operation, including attribute/style changes.
     const toggles = await openAccordions(send, profile, delay);
+    const hiddenRemoved = !inspectSelector && profile.removeHidden === true ? await evaluate(`(() => {
+        const elements = document.querySelectorAll('[hidden]');
+        for (const element of elements) element.removeAttribute('hidden');
+        return elements.length;
+    })()`) : 0;
     await evaluate(`(async () => {
         const deadline = Date.now() + ${Number(profile.timeoutMs)};
         const step = Math.max(200, Math.floor(innerHeight * .8));
@@ -190,6 +195,6 @@ async function main() {
     if (measured.clip.width * measured.clip.height > 100000000 || measured.clip.width <= 0 || measured.clip.height <= 0) throw new Error('캡처 영역은 1억 픽셀 이하여야 합니다.');
     const screenshot = await send('Page.captureScreenshot', { format:'png', fromSurface:true,captureBeyondViewport:true,clip:{...measured.clip,scale:1} });
     fs.writeFileSync(outputPath,Buffer.from(screenshot.data,'base64'));
-    fs.writeFileSync(`${outputPath}.json`,JSON.stringify({...measured,...toggles,browser,resourceFailures,httpErrors:responses,consoleErrors,profile},null,2));
+    fs.writeFileSync(`${outputPath}.json`,JSON.stringify({...measured,...toggles,browser,resourceFailures,httpErrors:responses,consoleErrors,profile,hiddenRemoved},null,2));
 }
 main().catch(error => {console.error(error.stack||String(error));process.exitCode=1;}).finally(cleanup);

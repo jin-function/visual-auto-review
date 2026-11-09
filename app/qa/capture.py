@@ -114,6 +114,8 @@ def validate_profile(value: dict | None) -> dict:
             raise ValueError("페이지 선택자 설정을 확인하세요.")
     if not profile["readySelector"] or not profile["elementSelector"]:
         raise ValueError("준비 요소와 진단 요소 선택자가 필요합니다.")
+    if type(profile["removeHidden"]) is not bool:
+        raise ValueError("hidden 속성 제거 설정을 확인하세요.")
     if not isinstance(profile["timeoutMs"], int) or not 10000 <= profile["timeoutMs"] <= 300000:
         raise ValueError("캡처 제한 시간은 10000~300000ms여야 합니다.")
     if not isinstance(profile["settleMs"], int) or not 100 <= profile["settleMs"] <= 2000:

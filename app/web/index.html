@@ -446,6 +446,14 @@
                             <input id="strip-input" type="number" min="64" max="4000" value="600" required>
                         </label>
                     </div>
+                    <label class="check">
+                        <input id="remove-hidden-input" type="checkbox" aria-describedby="remove-hidden-help">
+                        캡처 전 hidden 속성 제거
+                    </label>
+                    <p id="remove-hidden-help" class="muted">
+                        새 검수 캡처에 적용됩니다.
+                        CSS로 숨긴 요소와 원본 HTML 파일은 그대로 유지합니다.
+                    </p>
                     <label>
                         페이지별 캡처 설정
                         <textarea id="profile-input" rows="12" spellcheck="false">

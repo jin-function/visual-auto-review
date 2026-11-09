@@ -5,9 +5,39 @@
     try { globalThis.__visualQAOverlay?.destroy?.(); } catch { /* Old extension contexts cannot call Chrome APIs. */ }
     // A reloaded extension loses its old isolated context, but its DOM can remain on the page.
     for (const stale of document.querySelectorAll('visualqa-overlay[data-visualqa-extension="overlay"]')) stale.remove();
+    const hiddenMarker = 'data-visualqa-export-original-hidden';
+    const previewId = Math.random().toString(36).slice(2);
+    const revealed = new Map();
+    for (const node of document.querySelectorAll(`[${hiddenMarker}]`)) restoreHidden(node);
     let host, canvas, context, bitmap, transfer, meta, settings, selected, frame = 0, devtoolsReady = false;
     let destroyed = false, resizeTimer, generation = 0, paintedReviewId = null, notified = '';
     const cache = new Map();
+    function restoreHidden(node, expected) {
+        const marker = node.getAttribute(hiddenMarker);
+        if (marker === null || (expected !== undefined && marker !== expected)) return;
+        let original;
+        try { original = JSON.parse(marker); } catch { return; }
+        if (!Array.isArray(original) || original.length !== 2 || original.some(value => typeof value !== 'string')) return;
+        if (!node.hasAttribute('hidden')) node.setAttribute('hidden', original[1]);
+        node.removeAttribute(hiddenMarker);
+    }
+    function clearHiddenPreview() {
+        for (const [node, marker] of revealed) restoreHidden(node, marker);
+        revealed.clear();
+    }
+    function updateSettings(value) {
+        const wasRevealed = settings?.removeHidden === true;
+        settings = {...value};
+        if (!settings.removeHidden) { clearHiddenPreview(); return; }
+        if (wasRevealed) return;
+        for (const node of document.querySelectorAll('[hidden]')) {
+            if (node.closest('[data-visualqa-extension]') || node.hasAttribute(hiddenMarker)) continue;
+            const marker = JSON.stringify([previewId, node.getAttribute('hidden')]);
+            node.setAttribute(hiddenMarker, marker);
+            node.removeAttribute('hidden');
+            revealed.set(node, marker);
+        }
+    }
     function available() {
         if (destroyed) return false;
         try { if (chrome.runtime.id === extensionId) return true; } catch { /* Context invalidated. */ }
@@ -80,11 +110,12 @@
         shadow.append(canvas); context = canvas.getContext('2d');
         document.documentElement.append(host);
     }
-    function remove() {
+    function remove(keepPreview = false) {
         generation++;
         bitmap?.close(); bitmap = null; transfer = null; selected = null; meta = null; paintedReviewId = null;
         host?.remove(); host = null; canvas = null;
         if (frame) cancelAnimationFrame(frame); frame = 0;
+        if (!keepPreview) { clearHiddenPreview(); settings = null; }
     }
     function viewportChanged() {
         if (!available()) return;
@@ -128,17 +159,17 @@
             let bytes = [...cache.values()].reduce((sum, item) => sum + item.size, 0);
             for (const [id, value] of cache) { if (bytes <= 32 * 1024 * 1024) break; cache.delete(id); bytes -= value.size; }
             transfer = null; paintedReviewId = null;
-            bitmap?.close(); bitmap = next; meta = pending.meta; settings = {...meta.settings}; selected = null;
+            bitmap?.close(); bitmap = next; meta = pending.meta; updateSettings(meta.settings); selected = null;
             devtoolsReady = meta.devtoolsReady === true;
             mount(); schedule(); return status();
         }
         if (message.type === 'empty') {
-            remove(); meta = message.meta; settings = {...meta.settings}; devtoolsReady = meta.devtoolsReady === true;
+            remove(true); meta = message.meta; updateSettings(meta.settings); devtoolsReady = meta.devtoolsReady === true;
             mount(); schedule(); return status();
         }
         if (message.type === 'settings') {
             if (!meta) throw new Error('오버레이를 먼저 연결하세요.');
-            settings = {...message.settings}; schedule(); return status();
+            updateSettings(message.settings); schedule(); return status();
         }
         if (message.type === 'jump') {
             if (!active()) throw new Error('현재 화면에 맞는 시안을 먼저 연결하세요.');

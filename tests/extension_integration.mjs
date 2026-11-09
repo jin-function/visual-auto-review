@@ -49,7 +49,7 @@ const server = http.createServer((request, response) => {
     else if (request.url === '/html/page.html') {
         response.setHeader('Content-Type', 'text/html; charset=utf-8');
         response.setHeader('Content-Security-Policy', `default-src 'none'; style-src 'self' 'unsafe-inline' ${foreignURL}; img-src 'none'; script-src 'none'`);
-        response.end(`<!doctype html>\n<html lang="ko"><head><meta charset="utf-8"><title>확장 도구 검증</title><link rel="stylesheet" href="../css/main.css"><link rel="stylesheet" href="${foreignURL}"><style>body{margin:0;font:16px sans-serif}#hero{height:180px;background:#fff}section{height:1400px;background:#f5f6fa}</style></head><body><header id="hero"><h1 id="title">원래 제목</h1><input id="input" value="before"><textarea>before</textarea></header><section><p>스크롤 위치 검증</p></section></body></html>`);
+        response.end(`<!doctype html>\n<html lang="ko"><head><meta charset="utf-8"><title>확장 도구 검증</title><link rel="stylesheet" href="../css/main.css"><link rel="stylesheet" href="${foreignURL}"><style>body{margin:0;font:16px sans-serif}#hero{height:180px;background:#fff}section{height:1400px;background:#f5f6fa}</style></head><body><header id="hero"><h1 id="title">원래 제목</h1><input id="input" value="before"><textarea>before</textarea></header><section><p>스크롤 위치 검증</p><p id="preview-hidden" hidden="until-found">숨김 복원 검증</p><p id="css-hidden" style="display:none" aria-hidden="true">CSS 숨김 검증</p></section></body></html>`);
     } else { response.writeHead(404); response.end(); }
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -242,6 +242,16 @@ try {
     assert.equal(await tool('[data-tool="extension-version"]', 'return this.textContent;'), `시안 검수 · v${manifest.version}`);
     assert.equal(await evaluate(page, `document.querySelector('visualqa-overlay').getAttribute('data-visualqa-version')`), manifest.version);
     assert.ok(settings.value.overlay.devtoolsReady);
+    assert.equal(settings.value.overlay.settings.removeHidden, false);
+    const hiddenSelector = '[data-tool="remove-hidden"]';
+    const hiddenValue = () => evaluate(page, `document.querySelector('#preview-hidden').getAttribute('hidden')`);
+    const toggleHidden = value => tool(hiddenSelector, `this.checked=${value};this.dispatchEvent(new Event('input'));`);
+    assert.equal(await hiddenValue(), 'until-found');
+    await toggleHidden(true);
+    await until(() => hiddenValue().then(value => value === null), 'preview removes hidden attribute');
+    assert.deepEqual(await evaluate(page, `(()=>{const node=document.querySelector('#css-hidden');return [getComputedStyle(node).display,node.getAttribute('aria-hidden')];})()`), ['none','true']);
+    await toggleHidden(false);
+    await until(() => hiddenValue().then(value => value === 'until-found'), 'original hidden value restored');
     assert.equal(await tool('[data-tool="options-tab"]', 'return this.getAttribute("aria-selected");'), 'true');
     await tool('[data-tool="findings-tab"]', 'this.click();');
     assert.equal(await tool('[data-tool="findings"]', 'return this.tagName;'), 'UL');
@@ -311,6 +321,8 @@ try {
         const legitimateStyle=document.createElement('style');legitimateStyle.id='application-style';legitimateStyle.textContent='/* KEEP INLINE COMMENT */\n.application {\n    color: red;\n}\n';document.head.append(legitimateStyle);
         const adopted=new CSSStyleSheet();adopted.replaceSync('@keyframes fiveserverInfoPopup {0%{top:0}} #fiveserver-info {color:red}');document.adoptedStyleSheets=[...document.adoptedStyleSheets,adopted];
     })()`);
+    await toggleHidden(true);
+    await until(() => hiddenValue().then(value => value === null), 'hidden preview active during export');
     await tool('[data-tool="save-as"]', `this.checked=false;this.dispatchEvent(new Event('input'));`);
     await pause(200);
     await tool('[data-tool="export"]', 'this.click();');
@@ -325,6 +337,10 @@ try {
     const html = detail.files.find(file => file.name.startsWith('html/')).content;
     assert.ok(html.includes('개발자도구에서 수정한 제목')); assert.ok(html.includes('value="after"')); assert.ok(html.includes('>after</textarea>'));
     assert.ok(!html.includes('visualqa-overlay')); assert.ok(!html.includes('visualqa-tools')); assert.ok(!html.includes('data-visualqa-export-'));
+    assert.match(html, /<p id="preview-hidden" hidden="until-found">/);
+    assert.equal(await hiddenValue(), null, 'export must not change the live preview');
+    await toggleHidden(false);
+    await until(() => hiddenValue().then(value => value === 'until-found'), 'hidden preview restored after export');
     assert.ok(detail.files.some(file => file.name.startsWith('css/') && file.content.includes('padding: 22px')));
     assert.ok(detail.files.some(file => file.name.startsWith('css/') && file.content.includes('.runtime-added')));
     assert.ok(detail.files.some(file => file.name.startsWith('css/') && file.content.includes('7px solid')), 'cross-origin DevTools CSS edits must be exported');
@@ -477,10 +493,16 @@ try {
     assert.equal(await tool('[data-tool="jump"]','return this.disabled;'),false,'returning to all findings restores selection');
     await tool('[data-tool="dx"]', `this.value='23';this.dispatchEvent(new Event('input'));`);
     await until(async () => (await state()).overlay.settings.dx===23,'package adjustment saved');
+    await toggleHidden(true);
+    await until(() => hiddenValue().then(value => value === null), 'preview enabled before detaching');
     await tool('[data-tool="remove"]','this.click();');
     await until(() => evaluate(side, `!document.querySelector('#connection').hidden`),'package detached');
+    assert.equal(await hiddenValue(), 'until-found', 'disconnect restores original hidden');
     await evaluate(side, `document.querySelector('#connect').click()`,true);
     await until(async () => (await state()).overlay.settings.dx===23 && (await state()).overlay.imageState==='ready','persistent adjustment restored on connect');
+    assert.equal(await hiddenValue(), null, 'saved preview setting applies after reconnection');
+    await toggleHidden(false);
+    await until(() => hiddenValue().then(value => value === 'until-found'), 'preview disabled on reconnected tab');
     await resize(390);
     await until(async () => (await state()).binding.device==='mo' && (await state()).overlay.imageState==='ready','app bundle MO ready');
     await until(() => bitmapMatches(2,200,0,100),'real app MO pixels');
@@ -549,15 +571,17 @@ try {
     const appUI = await attach(appTarget.targetId);await send('Runtime.enable',{},appUI);await send('Page.enable',{},appUI);
     await send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false},appUI);
     await until(()=>evaluate(appUI,`!!document.querySelector('#edit-project') && !document.querySelector('#result').hidden`),'review result UI');
-    assert.equal(await evaluate(appUI,`document.querySelector('#app-version').textContent`),'로컬 저장 · v3.6.1');
+    assert.equal(await evaluate(appUI,`document.querySelector('#app-version').textContent`),'로컬 저장 · v3.6.2');
     const appViewChecks=fs.readFileSync(path.join(root,'tests/app_view_checks.js'),'utf8');
     assert.equal((await evaluate(appUI,`(async()=>{${appViewChecks}})()`)).status,'PASS');
     await evaluate(appUI,`document.querySelector('#edit-project').click()`);
     await until(()=>evaluate(appUI,`document.querySelector('#project-dialog').open`),'project configuration UI');
     assert.equal(await evaluate(appUI,`document.querySelector('#pc-overlay-target').value`),'pc');
     assert.equal(await evaluate(appUI,`document.querySelector('#mo-overlay-target').value`),'mo');
-    await evaluate(appUI,`document.querySelector('#breakpoint-input').value='900';document.querySelector('#project-form').requestSubmit()`);
+    assert.equal(await evaluate(appUI,`document.querySelector('#remove-hidden-input').checked`),false);
+    await evaluate(appUI,`document.querySelector('#breakpoint-input').value='900';document.querySelector('#remove-hidden-input').checked=true;document.querySelector('#project-form').requestSubmit()`);
     await until(()=>evaluate(appUI,`!document.querySelector('#project-dialog').open && !document.querySelector('#save-project').disabled && !!state.run && !!state.result`),'project settings saved');
+    assert.equal(await evaluate(appUI,`currentProject().profile.removeHidden`),true);
     const previousUIRun = await evaluate(appUI,'state.run.id');
     await evaluate(appUI,`document.querySelector('#start-run').click()`);
     await until(()=>evaluate(appUI,`state.run?.id!==${JSON.stringify(previousUIRun)} && document.querySelector('#run-status').textContent==='완료' && !document.querySelector('#result').hidden`),'new UI run completes');

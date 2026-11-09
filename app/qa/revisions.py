@@ -48,8 +48,11 @@ class Revisions:
             if any(metadata.get(key) for key in ("brokenImages", "httpErrors", "consoleErrors", "resourceFailures")):
                 if result["metrics"]["verdict"] == "PASS":
                     result["metrics"]["verdict"] = "REVIEW"
+            profile = dict(run["project"]["profile"])
+            if not profile.get("removeHidden"):
+                profile.pop("removeHidden", None)  # Preserve pre-option comparisons when disabled.
             signature = hashlib.sha256(str((target["asset_id"], width, run["project"]["url"],
-                                            run["project"]["profile"], run["project"]["settings"])).encode()).hexdigest()
+                                            profile, run["project"]["settings"])).encode()).hexdigest()
             result.update(id=revision_id, run_id=run_id, target_id=target_id, created_at=now(),
                           y_offset=offset, reason=reason, asset=asset, reference_scale=scale,
                           baseline_signature=signature, settings=run["project"]["settings"], capture=metadata)

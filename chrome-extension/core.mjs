@@ -102,6 +102,7 @@ export function overlaySettings(value = {}) {
         dy: finite(Number(value.dy ?? 0), -150000, 150000, 'Y 보정'),
         scale: finite(Number(value.scale ?? 1), 0.1, 4, '배율'),
         visible: value.visible !== false,
+        removeHidden: value.removeHidden === true,
         toolsCollapsed: value.toolsCollapsed === true,
         saveAs: value.saveAs !== false
     };

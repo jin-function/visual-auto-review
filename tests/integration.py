@@ -64,6 +64,8 @@ run = wait(run['id'])
 assert run['status'] == 'complete', run
 result = api(f"/api/result?run={run['id']}&target=mobile")
 assert result['capture']['toggleCount'] == result['capture']['openedToggleCount'] == 1
+assert result['capture']['hiddenRemoved'] == 0
+assert not any(node['selector'] == '#capture-hidden' for node in result['capture']['domElements'])
 assert not result['capture']['brokenImages']
 assert result['findings']
 assert sum(s['changed_pixels'] for s in result['strips']) == result['metrics']['changed_pixels']
@@ -84,5 +86,15 @@ for filename in ('reference.png','actual.png','diff.png','overlay.png'):
     response = request(f"/files/{run['id']}/mobile/{current['id']}/{filename}")
     assert response.headers['Content-Type'] == 'image/png'
     response.close()
+project['profile']['removeHidden'] = True
+project = api('/api/projects', project)
+assert project['profile']['removeHidden'] is True
+revealed_run = wait(api('/api/start', {'project_id':project['id']})['id'])
+assert revealed_run['status'] == 'complete', revealed_run
+revealed = api(f"/api/result?run={revealed_run['id']}&target=mobile")['capture']
+assert revealed['hiddenRemoved'] == 1 and revealed['clip']['height'] > result['capture']['clip']['height']
+assert revealed['toggleCount'] == revealed['openedToggleCount'] == 1
+selectors = {node['selector'] for node in revealed['domElements']}
+assert '#capture-hidden' in selectors and '#capture-css-hidden' not in selectors
 (Path(__file__).resolve().parents[1] / 'verification/app-integration.json').write_text(json.dumps({'project_id':project['id'],'run_id':run['id'],'revision_id':current['id'],'capture':current['capture']['browser'],'findings':len(current['findings']),'metrics':current['metrics']},ensure_ascii=False,indent=2), encoding="utf-8")
 print(json.dumps({'integration':'PASS','run_id':run['id'],'findings':len(current['findings']),'accordion':'1/1 opened','browser':current['capture']['browser']['product']},ensure_ascii=False))
