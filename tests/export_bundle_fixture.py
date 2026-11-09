@@ -17,6 +17,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--url', required=True)
 parser.add_argument('--destination', type=Path, required=True)
 parser.add_argument('--serve', action='store_true')
+parser.add_argument('--remove-hidden', action='store_true')
 args = parser.parse_args()
 with tempfile.TemporaryDirectory(prefix='visualqa-bundle-fixture-') as directory:
     service = Service(Store(Path(directory)))
@@ -38,7 +39,8 @@ with tempfile.TemporaryDirectory(prefix='visualqa-bundle-fixture-') as directory
             Image.new('RGB', (width, 160), color).save(stream, 'PNG')
             asset = service.store.import_asset(stream.getvalue(), device + '.png')
             targets.append({'id': device, 'device': device, 'name': device.upper(), 'width': width, 'enabled': True, 'asset_id': asset['id']})
-        project = service.save_project({'name': '앱에서 내보낸 통합 검수', 'url': args.url, 'targets': targets, 'responsive': {'breakpoint': 1024}})
+        project = service.save_project({'name': '앱에서 내보낸 통합 검수', 'url': args.url, 'targets': targets,
+            'responsive': {'breakpoint': 1024}, 'profile': {'removeHidden': args.remove_hidden}})
         if args.serve:
             service.save_project({**project, 'targets': [targets[0]], 'responsive': {'breakpoint': 1024}})
             service.start(project['id'])

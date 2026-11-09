@@ -47,6 +47,17 @@
                 }
             }
         },
+        "captureOptions": {
+            "type": "object",
+            "required": [
+                "removeHidden"
+            ],
+            "properties": {
+                "removeHidden": {
+                    "type": "boolean"
+                }
+            }
+        },
         "targets": {
             "type": "array",
             "minItems": 1,

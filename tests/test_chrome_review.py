@@ -63,6 +63,16 @@ class ChromeReviewTests(unittest.TestCase):
         self.assertEqual([t['device'] for t in package['targets']], ['mo'])
         self.assertEqual(package['unavailable'][0]['device'], 'pc')
 
+    def test_bundle_preserves_hidden_option_from_the_selected_run(self):
+        self.project['profile']['removeHidden'] = True
+        self.project = self.service.save_project(self.project)
+        enabled = self.start()
+        self.project['profile']['removeHidden'] = False
+        self.project = self.service.save_project(self.project)
+        disabled = self.start()
+        self.assertEqual(json.loads(encoded_review(self.store, enabled['id']))['captureOptions'], {'removeHidden': True})
+        self.assertEqual(json.loads(encoded_review(self.store, disabled['id']))['captureOptions'], {'removeHidden': False})
+
     def test_ambiguous_device_requires_project_selection(self):
         value = {**self.project, 'targets': [{**self.project['targets'][0], 'id': 'wide-a', 'device': 'pc'},
                                           {**self.project['targets'][0], 'id': 'wide-b', 'device': 'pc'}]}

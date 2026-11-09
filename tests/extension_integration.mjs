@@ -471,16 +471,20 @@ try {
     await until(async()=>!!(await state()).binding.packageId && (await state()).overlay.imageState==='ready','old tab binding upgraded on reload');
     // The app's real authenticated HTTP route produces this exact file; no hand-built JS package.
     const bundlePath = path.join(temp, 'app-review.json');
-    const generated = spawnSync(process.env.VISUAL_QA_TEST_PYTHON || 'python3', [path.join(root,'tests/export_bundle_fixture.py'),'--url',url,'--destination',bundlePath],
+    const generated = spawnSync(process.env.VISUAL_QA_TEST_PYTHON || 'python3', [path.join(root,'tests/export_bundle_fixture.py'),'--url',url,'--destination',bundlePath,'--remove-hidden'],
         {encoding:'utf8',env:{...process.env,PYTHONPATH:path.join(root,'app'),PYTHONDONTWRITEBYTECODE:'1'}});
     assert.equal(generated.status,0,generated.stdout+generated.stderr);
     const appBundle = JSON.parse(fs.readFileSync(bundlePath,'utf8'));
+    assert.deepEqual(appBundle.captureOptions, {removeHidden: true});
+    const importAppBundle = () => evaluate(side, `(()=>{const transfer=new DataTransfer();transfer.items.add(new File([${JSON.stringify(JSON.stringify(appBundle))}],'app-review.json',{type:'application/json'}));const input=document.querySelector('#import');input.files=transfer.files;input.dispatchEvent(new Event('change'));})()`);
     await tool('[data-tool="manage"]', 'this.click();');
-    await evaluate(side, `(()=>{const transfer=new DataTransfer();transfer.items.add(new File([${JSON.stringify(JSON.stringify(appBundle))}],'app-review.json',{type:'application/json'}));const input=document.querySelector('#import');input.files=transfer.files;input.dispatchEvent(new Event('change'));})()`);
+    await importAppBundle();
     await until(() => evaluate(side, `document.querySelector('#message').textContent.includes('파일을 불러왔습니다') && document.querySelector('#reviews').value===${JSON.stringify(appBundle.packageId)}`),'one app bundle imported');
     await evaluate(side, `document.querySelector('#connect').click()`,true);
     await resize(1200);
     await until(async () => (await state()).binding.packageId===appBundle.packageId && (await state()).overlay.imageState==='ready','app bundle PC ready');
+    assert.equal(await hiddenValue(), null, 'connecting a new file applies the captured hidden option without using the toggle');
+    await until(() => tool(hiddenSelector, 'return this.checked;'), 'toolbar reflects the captured hidden option');
     await until(() => bitmapMatches(0,200,2,100),'real app PC pixels');
     assert.equal(await tool('[data-tool="variant-pc"]','return this.closest("label").hidden;'),true);
     assert.equal(await tool('[data-tool="variant-mo"]','return this.closest("label").hidden;'),true);
@@ -493,8 +497,7 @@ try {
     assert.equal(await tool('[data-tool="jump"]','return this.disabled;'),false,'returning to all findings restores selection');
     await tool('[data-tool="dx"]', `this.value='23';this.dispatchEvent(new Event('input'));`);
     await until(async () => (await state()).overlay.settings.dx===23,'package adjustment saved');
-    await toggleHidden(true);
-    await until(() => hiddenValue().then(value => value === null), 'preview enabled before detaching');
+    assert.equal(await hiddenValue(), null, 'changing X position keeps the imported hidden option');
     await tool('[data-tool="remove"]','this.click();');
     await until(() => evaluate(side, `!document.querySelector('#connection').hidden`),'package detached');
     assert.equal(await hiddenValue(), 'until-found', 'disconnect restores original hidden');
@@ -511,6 +514,12 @@ try {
     await until(async () => (await state()).overlay.imageState==='ready' && (await state()).binding.device==='pc','cached app PC ready');
     assert.equal((await state()).overlay.settings.dx,23);
     assert.equal((await state()).overlay.cachedReviewIds.length,2);
+    assert.equal(await hiddenValue(), 'until-found', 'manual override survives a device switch');
+    await tool('[data-tool="manage"]','this.click();');
+    await importAppBundle();
+    await until(() => hiddenValue().then(value => value === null), 'reimport restores captured hidden option on already connected page');
+    assert.equal((await state()).overlay.settings.dx,23,'reimport must retain unrelated preview preferences');
+    await evaluate(side, `document.querySelector('#back').click()`,true);
     const appMeta = await evaluate(side, `(async()=>{const {listReviews}=await import('./db.js');return (await listReviews()).every(review=>!review.image.base64);})()`);
     assert.equal(appMeta,true,'metadata queries must exclude image bytes');
     const groupsBefore = await evaluate(side, `(async()=>{const {listPackages}=await import('./db.js');return (await listPackages()).length;})()`);
@@ -571,7 +580,7 @@ try {
     const appUI = await attach(appTarget.targetId);await send('Runtime.enable',{},appUI);await send('Page.enable',{},appUI);
     await send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false},appUI);
     await until(()=>evaluate(appUI,`!!document.querySelector('#edit-project') && !document.querySelector('#result').hidden`),'review result UI');
-    assert.equal(await evaluate(appUI,`document.querySelector('#app-version').textContent`),'로컬 저장 · v3.6.2');
+    assert.equal(await evaluate(appUI,`document.querySelector('#app-version').textContent`),'로컬 저장 · v3.6.3');
     const appViewChecks=fs.readFileSync(path.join(root,'tests/app_view_checks.js'),'utf8');
     assert.equal((await evaluate(appUI,`(async()=>{${appViewChecks}})()`)).status,'PASS');
     await evaluate(appUI,`document.querySelector('#edit-project').click()`);
@@ -589,6 +598,7 @@ try {
     const savedJSON = await until(()=>fs.readdirSync(path.join(temp,'downloads')).find(name=>name.endsWith('.json')),'app UI unified JSON download');
     const uiPackage = JSON.parse(fs.readFileSync(path.join(temp,'downloads',savedJSON),'utf8'));
     assert.equal(uiPackage.version,3);assert.equal(uiPackage.targets.length,2);assert.equal(uiPackage.responsive.breakpoint,900);
+    assert.deepEqual(uiPackage.captureOptions,{removeHidden:true});
     assert.equal((await import('../chrome-extension/core.mjs')).validatePackage instanceof Function,true);
     const uiValidated = await (await import('../chrome-extension/core.mjs')).validatePackage(uiPackage);
     assert.equal(uiValidated.targets.length,2);

@@ -14,6 +14,7 @@ def schema() -> str:
             "packageId": {"type": "string", "pattern": "^[a-f0-9]{64}$"}, "coordinateSpace": {"const": c["coordinateSpace"]},
             "runId": {"type": "string", "minLength": 1}, "url": {"type": "string", "format": "uri"},
             "responsive": {"type": "object", "required": ["breakpoint"], "properties": {"breakpoint": {"type": "integer", "minimum": 320, "maximum": 4096}}},
+            "captureOptions": {"type": "object", "required": ["removeHidden"], "properties": {"removeHidden": {"type": "boolean"}}},
             "targets": {"type": "array", "minItems": 1, "maxItems": c["maxTargets"], "items": {"type": "object",
                 "required": ["device", "targetId", "revisionId", "runId", "url", "imageRole", "viewportWidth", "placement", "display", "image", "findings"],
                 "properties": {"device": {"enum": c["devices"]}, "imageRole": {"const": "reference-original"},

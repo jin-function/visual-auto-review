@@ -103,6 +103,7 @@ def chrome_bundle(store: Store, run_id: str, target_id: str | None = None, revis
         return {"format": CONTRACT["format"], "version": CONTRACT["version"], "packageId": package_id,
                 "coordinateSpace": CONTRACT["coordinateSpace"], "producer": {"appVersion": VERSION},
                 "name": run["project"]["name"], "url": targets[0]["url"], "runId": run_id,
+                "captureOptions": {"removeHidden": (run["project"].get("profile") or {}).get("removeHidden") is True},
                 "responsive": {"breakpoint": responsive["breakpoint"]}, "targets": targets, "unavailable": unavailable}
 
 

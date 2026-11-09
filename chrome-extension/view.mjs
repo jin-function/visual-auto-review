@@ -103,7 +103,8 @@ export async function createReviewView() {
         const group = await validatePackage(JSON.parse(await file.text()));
         await putPackage(group); await loadPackages(group.id);
         await request('imported', {tabId, packageId: group.id}); event.target.value = '';
-        message('파일을 불러왔습니다. PC·MO 등록 상태를 확인하고 현재 페이지에 연결하세요.');
+        message('파일을 불러왔습니다. PC·MO 등록 상태를 확인하고 현재 페이지에 연결하세요.' +
+            (group.captureOptions?.removeHidden ? '\n연결하면 앱의 hidden 속성 제거 설정이 적용됩니다.' : ''));
     }));
     $('reviews').addEventListener('change', action(selectPackage));
     for (const [id, type] of [['connect', 'connect'], ['open-page', 'open']]) $(id).addEventListener('click', action(async () => {

@@ -83,6 +83,8 @@ export async function validatePackage(value) {
     if (!Array.isArray(value.targets) || !value.targets.length || value.targets.length > CONTRACT.maxTargets) throw new Error('통합 검수 파일에는 PC·MO 대상이 각각 하나씩 있어야 합니다.');
     const breakpoint = value.responsive?.breakpoint;
     if (!Number.isInteger(breakpoint) || breakpoint < 320 || breakpoint > 4096) throw new Error('PC 전환 폭이 올바르지 않습니다.');
+    const captureOptions = value.captureOptions;
+    if (captureOptions !== undefined && typeof captureOptions?.removeHidden !== 'boolean') throw new Error('캡처의 hidden 속성 제거 설정이 올바르지 않습니다.');
     const targets = [], devices = new Set(), ids = new Set();
     for (const target of value.targets) {
         if (!CONTRACT.devices.includes(target.device) || devices.has(target.device) || !target.targetId || ids.has(target.targetId) || !target.revisionId) throw new Error('검수 대상이 누락되었거나 중복되었습니다.');
@@ -93,7 +95,8 @@ export async function validatePackage(value) {
             appVersion: String(value.producer?.appVersion || ''), coordinateSpace: CONTRACT.coordinateSpace});
     }
     return {id: value.packageId, version: CONTRACT.version, name: String(value.name || '검수 결과').slice(0, 300),
-        url: pageURL(value.url).href, runId: String(value.runId), breakpoint, legacy: false, targets, importedAt: Date.now()};
+        url: pageURL(value.url).href, runId: String(value.runId), breakpoint, legacy: false, targets, importedAt: Date.now(),
+        ...(captureOptions !== undefined && {captureOptions: {removeHidden: captureOptions.removeHidden}})};
 }
 export function overlaySettings(value = {}) {
     return {

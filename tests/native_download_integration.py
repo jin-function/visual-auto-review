@@ -50,6 +50,7 @@ with tempfile.TemporaryDirectory(prefix='visualqa-webkit-') as directory:
             package = json.loads(destination.read_text(encoding='utf-8'))
             assert package['version'] == 3
             assert {target['device'] for target in package['targets']} == {'pc', 'mo'}
+            assert package['captureOptions'] == {'removeHidden': False}
             parsed = urllib.parse.urlsplit(address)
             origin = f'{parsed.scheme}://{parsed.netloc}'
             token = urllib.parse.parse_qs(parsed.query)['token'][0]

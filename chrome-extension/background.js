@@ -3,7 +3,7 @@ import {DEFAULT_BREAKPOINT, deviceForWidth, initialVariants} from './responsive.
 import {pageURL, samePage, overlaySettings} from './core.mjs';
 import {requireSidePanel} from './extension-state.mjs';
 
-import {binding, preferences, storeBinding, removeBinding} from './session.mjs';
+import {binding, preferences, importCaptureOptions, storeBinding, removeBinding} from './session.mjs';
 const uiPorts = new Set(), errors = new Map();
 function changed(tabId, reason) { for (const port of uiPorts) { try { port.postMessage({type: 'changed', tabId, reason}); } catch { uiPorts.delete(port); } } }
 function failed(tabId, error) { errors.set(tabId, error.message); changed(tabId); }
@@ -40,7 +40,7 @@ async function newBinding(review, settings) {
     }
     return {reviewId: review.id, packageId: review.packageId, packageVersion: group?.version || 2, legacy: group?.legacy !== false,
         activeReviewId: null, breakpoint: saved.breakpoint || group?.breakpoint || DEFAULT_BREAKPOINT,
-        variants, customVariants: !!restored, settings: overlaySettings(settings || saved.settings),
+        variants, customVariants: !!restored, settings: overlaySettings({...group?.captureOptions, ...(settings || saved.settings)}),
         adjustments: saved.adjustments || {[review.id]: {dx: settings?.dx || 0, dy: settings?.dy || 0, scale: settings?.scale || 1}}};
 }
 async function selectedReview(message) {
@@ -148,15 +148,20 @@ async function handle(message) {
         return apply(tabId);
     }
     if (message.type === 'imported') {
+        const group = await getPackage(message.packageId), options = group?.captureOptions;
+        await importCaptureOptions(message.packageId, options);
         const saved = await chrome.storage.session.get(null);
-        for (const [key, config] of Object.entries(saved)) {
+        for (const [key, initial] of Object.entries(saved)) {
             if (!key.startsWith('tab:')) continue;
-            const anchorMeta = await getReviewMeta(config.reviewId);
-            if ((config.packageId || anchorMeta?.packageId) !== message.packageId) continue;
+            const anchorMeta = initial.packageId ? null : await getReviewMeta(initial.reviewId);
+            if ((initial.packageId || anchorMeta?.packageId) !== message.packageId) continue;
             const id = Number(key.slice(4));
             await exclusive(id, async () => {
+                const config = await binding(id);
+                if (!config) return;
                 const anchor = await getReviewMeta(config.reviewId);
-                if (!anchor) return;
+                if (!anchor || (config.packageId || anchor.packageId) !== message.packageId) return;
+                if (options) config.settings = overlaySettings({...config.settings, removeHidden: options.removeHidden});
                 if (!config.customVariants) config.variants = initialVariants(anchor, await listReviews(), samePage);
                 await storeBinding(id, config);
                 try { await reconcile(id); } catch (error) { failed(id, error); }

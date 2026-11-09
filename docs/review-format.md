@@ -15,6 +15,7 @@ Schema 외에 같은 실행·페이지 여부, 대상 중복, PNG 크기·픽셀
 | `runId`, `name`, `url` | 검수 실행과 실제 페이지 |
 | `producer.appVersion` | 내보낸 앱 버전 |
 | `responsive.breakpoint` | PC를 표시하기 시작하는 CSS 뷰포트 폭 |
+| `captureOptions.removeHidden` | 검수 실행 당시의 `hidden` 속성 제거 여부. 이전 파일에서는 생략 가능 |
 | `coordinateSpace` | `reference-display-css-pixels-v1` |
 | `targets` | 완료된 PC·MO 결과, 장치별 최대 하나 |
 | `unavailable` | 결과가 없는 장치와 사유 |
@@ -27,6 +28,10 @@ Schema 외에 같은 실행·페이지 여부, 대상 중복, PNG 크기·픽셀
 프로젝트에 추가 검수 폭이 있다면 PC·MO 오버레이 대상으로 사용할 항목을 프로젝트 설정에서 정합니다.
 현재 화면에서 선택한 비교 버전은 해당 대상에 적용하고, 다른 대상은 최신 완료 버전을 사용합니다.
 파일 생성은 저장소 잠금 안에서 버전 선택을 고정한 뒤 수행합니다.
+
+`captureOptions.removeHidden`은 현재 프로젝트 설정이 아니라 해당 검수 실행에 저장된 설정입니다.
+확장에서 파일을 불러오면 이 값으로 미리보기 옵션을 설정합니다.
+이 필드가 없는 이전 파일은 확장에 저장된 옵션을 유지합니다.
 
 ## 좌표
 

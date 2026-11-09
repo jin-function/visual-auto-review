@@ -8,6 +8,12 @@ export async function binding(tabId) {
 export async function preferences(packageId) {
     return (await chrome.storage.local.get(preferenceKey(packageId)))[preferenceKey(packageId)] || {};
 }
+export async function importCaptureOptions(packageId, options) {
+    if (!options) return;
+    const saved = await preferences(packageId);
+    await chrome.storage.local.set({[preferenceKey(packageId)]: {...saved,
+        settings: {...saved.settings, removeHidden: options.removeHidden}}});
+}
 export async function storeBinding(tabId, value, persist = false) {
     await chrome.storage.session.set({[tabKey(tabId)]: value});
     if (persist && value.packageId) await chrome.storage.local.set({[preferenceKey(value.packageId)]: {

@@ -39,7 +39,7 @@ with tempfile.TemporaryDirectory(prefix='visualqa-launcher-') as directory:
                     headers={'X-VisualQA': token, 'Origin': origin}), timeout=15) as response:
                     return json.load(response)
             state = api('/api/state')
-            assert state['version'] == '3.6.2' and not state['projects'] and not state['runs']
+            assert state['version'] == '3.6.3' and not state['projects'] and not state['runs']
             completed = subprocess.run([sys.executable, str(root / 'tests/integration.py'), str(ready), fixture_url],
                 env=os.environ.copy(), capture_output=True, text=True, encoding='utf-8', timeout=150)
             assert completed.returncode == 0, completed.stdout + completed.stderr
@@ -47,6 +47,7 @@ with tempfile.TemporaryDirectory(prefix='visualqa-launcher-') as directory:
             run = state['runs'][0]
             package = api('/api/chrome-review?' + urllib.parse.urlencode({'run': run['id'], 'target': 'mobile'}))
             assert package['version'] == 3
+            assert package['captureOptions'] == {'removeHidden': True}
             assert package['targets'][0]['device'] == 'mo' and package['targets'][0]['targetId'] == 'mobile'
             assert package['targets'][0]['imageRole'] == 'reference-original'
             print(json.dumps({'status': 'PASS', 'checks': ['shared launcher', 'empty isolated store',

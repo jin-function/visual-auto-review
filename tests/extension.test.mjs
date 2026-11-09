@@ -158,6 +158,12 @@ test('v3 package validates both images before import and rejects mixed or duplic
     const packageValue = {format:CONTRACT.format,version:3,packageId:'a'.repeat(64),coordinateSpace:CONTRACT.coordinateSpace,runId:'r',url:target.url,responsive:{breakpoint:900},targets:[pc,mo]};
     const group = await validatePackage(packageValue);
     assert.equal(group.targets.length,2);assert.equal(group.breakpoint,900);assert.notEqual(group.targets[0].id,group.targets[1].id);
+    assert.equal(group.captureOptions, undefined, 'older v3 files do not override preview settings');
+    for (const removeHidden of [true, false]) {
+        const imported = await validatePackage({...packageValue, captureOptions: {removeHidden}});
+        assert.deepEqual(imported.captureOptions, {removeHidden});
+    }
+    await assert.rejects(validatePackage({...packageValue,captureOptions:{removeHidden:'false'}}), /hidden/);
     await assert.rejects(validatePackage({...packageValue,targets:[pc,pc]}), /중복/);
     await assert.rejects(validatePackage({...packageValue,targets:[pc,{...mo,runId:'other'}]}), /같은 실행/);
     await assert.rejects(validatePackage({...packageValue,targets:[pc,{...mo,image:{...mo.image,sha256:'0'.repeat(64)}}]}), /손상/);
