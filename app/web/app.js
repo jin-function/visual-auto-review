@@ -337,16 +337,44 @@ $('review-form').addEventListener('submit',action(async event=>{
     }finally{button.disabled=false;}
 }));
 $('export-run').addEventListener('click',()=>{const a=element('a');a.href=`/api/export?run=${state.run.id}`;a.download='visual-qa-report.zip';document.body.append(a);a.click();a.remove();});
+$('chrome-review-latest').addEventListener('click', action(async event => {
+    const runId = event.currentTarget.dataset.runId, result = state.result;
+    $('chrome-review-incomplete').close();
+    if (!runId) return;
+    await refresh();
+    if (state.result === result) await selectRun(runId, result?.target_id);
+}));
 $('chrome-review').addEventListener('click',action(async()=>{
     const result=state.result;
     if(!result)return;
-    const route=`/api/chrome-review?run=${result.run_id}&target=${result.target_id}&revision=${result.id}`;
-    const response=await fetch(route,{headers:{'X-VisualQA':token}});
-    if(!response.ok){const value=await response.json();throw new Error(value.error||'검수 파일을 만들지 못했습니다.');}
-    const url=URL.createObjectURL(await response.blob());
-    const a=element('a');a.href=url;a.download='visualqa-review.json';document.body.append(a);a.click();a.remove();
-    setTimeout(()=>URL.revokeObjectURL(url),30000);
-    toast('PC·MO 통합 파일의 저장을 요청했습니다. 저장된 JSON을 Chrome 확장에서 불러오세요.');
+    const button = $('chrome-review');
+    button.disabled = true;
+    try {
+        const query = new URLSearchParams({run: result.run_id, target: result.target_id, revision: result.id, require_both: '1'});
+        const response = await fetch(`/api/chrome-review?${query}`, {headers: {'X-VisualQA': token}});
+        if (!response.ok) {
+            const value = await response.json();
+            if (state.result !== result) return;
+            if (response.status !== 409 || !value.missing?.length) throw new Error(value.error || '검수 파일을 만들지 못했습니다.');
+            const latest = value.latest_complete, move = $('chrome-review-latest');
+            $('chrome-review-incomplete-message').textContent = value.error;
+            $('chrome-review-incomplete-guide').textContent = latest
+                ? `최신 완료 이력: ${date(latest.created_at)}. 이동한 뒤 통합 파일을 저장하세요.`
+                : '이 프로젝트에 PC·MO가 모두 완료된 이력이 없습니다. 프로젝트 설정에서 두 대상을 켜고 새 검수를 실행하세요.';
+            move.hidden = !latest;
+            move.dataset.runId = latest?.run_id || '';
+            $('chrome-review-incomplete').showModal();
+            return;
+        }
+        const blob = await response.blob();
+        if (state.result !== result) return;
+        const url = URL.createObjectURL(blob);
+        const a = element('a'); a.href = url; a.download = 'visualqa-review.json'; document.body.append(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 30000);
+        toast('PC·MO가 모두 포함된 통합 파일의 저장을 요청했습니다.');
+    } finally {
+        button.disabled = false;
+    }
 }));
 $('prune-runs').addEventListener('click',action(async()=>{
     const input=prompt('완료된 검수 이력을 최근 몇 개 보관할까요? 실패·중단 이력은 유지합니다.','20');if(input===null)return;

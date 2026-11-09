@@ -20,7 +20,7 @@ from urllib.parse import parse_qs, urlparse
 
 from . import VERSION
 from .capture import APP_ROOT, default_profile
-from .chrome_review import encoded_review
+from .chrome_review import MissingReviewDevices, encoded_review
 from .export import archive
 from .service import Service
 from .storage import Store, atomic_json
@@ -110,7 +110,8 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/source/file":
                 self._json(self.server.service.sources.read(query["project"], query["path"], int(query.get("line", 1))))
             elif parsed.path == "/api/chrome-review":
-                content = encoded_review(store, query["run"], query.get("target"), query.get("revision"))
+                content = encoded_review(store, query["run"], query.get("target"), query.get("revision"),
+                                         require_both=query.get("require_both") == "1")
                 self._headers(200, "application/octet-stream", len(content), {
                     "Content-Disposition": 'attachment; filename="visualqa-review.json"'})
                 self.wfile.write(content)
@@ -126,6 +127,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._file(store.revision_path(parts[2], parts[3], parts[4]) / parts[5])
             else:
                 self._json({"error": "주소를 찾을 수 없습니다."}, 404)
+        except MissingReviewDevices as error:
+            self._json({"error": str(error), "missing": error.missing, "latest_complete": error.latest_complete}, 409)
         except (ValueError, KeyError) as error:
             self._json({"error": str(error)}, 400)
         except FileNotFoundError as error:

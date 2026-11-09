@@ -549,7 +549,7 @@ try {
     const appUI = await attach(appTarget.targetId);await send('Runtime.enable',{},appUI);await send('Page.enable',{},appUI);
     await send('Emulation.setDeviceMetricsOverride',{width:1440,height:1000,deviceScaleFactor:1,mobile:false},appUI);
     await until(()=>evaluate(appUI,`!!document.querySelector('#edit-project') && !document.querySelector('#result').hidden`),'review result UI');
-    assert.equal(await evaluate(appUI,`document.querySelector('#app-version').textContent`),'로컬 저장 · v3.6.0');
+    assert.equal(await evaluate(appUI,`document.querySelector('#app-version').textContent`),'로컬 저장 · v3.6.1');
     const appViewChecks=fs.readFileSync(path.join(root,'tests/app_view_checks.js'),'utf8');
     assert.equal((await evaluate(appUI,`(async()=>{${appViewChecks}})()`)).status,'PASS');
     await evaluate(appUI,`document.querySelector('#edit-project').click()`);

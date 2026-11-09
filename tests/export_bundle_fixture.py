@@ -39,6 +39,11 @@ with tempfile.TemporaryDirectory(prefix='visualqa-bundle-fixture-') as directory
             asset = service.store.import_asset(stream.getvalue(), device + '.png')
             targets.append({'id': device, 'device': device, 'name': device.upper(), 'width': width, 'enabled': True, 'asset_id': asset['id']})
         project = service.save_project({'name': '앱에서 내보낸 통합 검수', 'url': args.url, 'targets': targets, 'responsive': {'breakpoint': 1024}})
+        if args.serve:
+            service.save_project({**project, 'targets': [targets[0]], 'responsive': {'breakpoint': 1024}})
+            service.start(project['id'])
+            service.executor.submit(lambda: None).result(timeout=20)
+            service.save_project(project)
         run = service.start(project['id'])
         service.executor.submit(lambda: None).result(timeout=20)
         for device in ['pc', 'mo']:

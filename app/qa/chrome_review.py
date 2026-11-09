@@ -13,6 +13,36 @@ from . import VERSION
 from .coordinates import reference_placement, reference_rect
 
 
+class MissingReviewDevices(ValueError):
+    def __init__(self, missing: list[str], latest_complete: dict | None):
+        names = "·".join(device.upper() for device in missing)
+        super().__init__(f"선택한 검수 이력에 {names} 완료 결과가 없습니다.")
+        self.missing = missing
+        self.latest_complete = latest_complete
+
+
+def review_targets(run: dict) -> tuple[dict, dict]:
+    responsive = responsive_config(run["project"])
+    targets = {device: responsive[device] for device in CONTRACT["devices"]
+               if run["targets"].get(responsive[device], {}).get("current_revision")}
+    return responsive, targets
+
+
+def latest_complete_review(store: Store, current: dict) -> dict | None:
+    for summary in store.run_summaries():
+        if summary["project_id"] != current["project_id"] or summary["id"] == current["id"]:
+            continue
+        try:
+            candidate = store.run(summary["id"])
+            _, targets = review_targets(candidate)
+        except (FileNotFoundError, ValueError):
+            continue
+        if len(targets) == len(CONTRACT["devices"]) and all(
+                candidate["targets"][target]["status"] == "complete" for target in targets.values()):
+            return {"run_id": candidate["id"], "created_at": candidate["created_at"]}
+    return None
+
+
 def chrome_review(store: Store, run_id: str, target_id: str, revision_id: str | None = None) -> dict:
     with store.lock:
         run = store.run(run_id)
@@ -47,19 +77,19 @@ def chrome_review(store: Store, run_id: str, target_id: str, revision_id: str | 
         }
 
 
-def chrome_bundle(store: Store, run_id: str, target_id: str | None = None, revision_id: str | None = None) -> dict:
+def chrome_bundle(store: Store, run_id: str, target_id: str | None = None, revision_id: str | None = None,
+                  *, require_both: bool = False) -> dict:
     """One immutable revision selection per device; never mix different runs."""
     with store.lock:
         run = store.run(run_id)
-        responsive = responsive_config(run["project"])
-        targets, unavailable = [], []
-        for device in CONTRACT["devices"]:
-            selected = responsive[device]
-            target = run["targets"].get(selected)
-            if not target or not target.get("current_revision"):
-                unavailable.append({"device": device, "reason": "검수 결과가 없습니다."})
-                continue
-            chosen_revision = revision_id if selected == target_id else target["current_revision"]
+        responsive, available = review_targets(run)
+        missing = [device for device in CONTRACT["devices"] if device not in available]
+        if require_both and missing:
+            raise MissingReviewDevices(missing, latest_complete_review(store, run))
+        targets = []
+        unavailable = [{"device": device, "reason": "검수 결과가 없습니다."} for device in missing]
+        for selected in available.values():
+            chosen_revision = revision_id if selected == target_id else run["targets"][selected]["current_revision"]
             review = chrome_review(store, run_id, selected, chosen_revision)
             if review["image"]["width"] * review["image"]["height"] > CONTRACT["maxImagePixels"]:
                 raise ValueError("시안은 1억 픽셀 이하여야 합니다.")
@@ -76,6 +106,7 @@ def chrome_bundle(store: Store, run_id: str, target_id: str | None = None, revis
                 "responsive": {"breakpoint": responsive["breakpoint"]}, "targets": targets, "unavailable": unavailable}
 
 
-def encoded_review(store: Store, run_id: str, target_id: str | None = None, revision_id: str | None = None) -> bytes:
-    return json.dumps(chrome_bundle(store, run_id, target_id, revision_id), ensure_ascii=False,
+def encoded_review(store: Store, run_id: str, target_id: str | None = None, revision_id: str | None = None,
+                   *, require_both: bool = False) -> bytes:
+    return json.dumps(chrome_bundle(store, run_id, target_id, revision_id, require_both=require_both), ensure_ascii=False,
                       allow_nan=False, separators=(",", ":")).encode("utf-8")

@@ -59,7 +59,8 @@ with tempfile.TemporaryDirectory(prefix='visualqa-webkit-') as directory:
             print(json.dumps({'status': 'PASS', 'checks': ['production WKWebView navigation policy', 'actual app export button',
                 'external navigation blocked', 'blob navigation without download blocked', 'native JSON download completes',
                 'original filename', 'PC and MO in saved JSON', 'downloaded bytes match API',
-                'exclusive image tabs and keyboard navigation', 'hidden tools and parked source editing', 'finding navigation and judgment persistence']}))
+                'exclusive image tabs and keyboard navigation', 'hidden tools and parked source editing', 'finding navigation and judgment persistence',
+                'missing MO warning and navigation to latest paired history']}))
         finally:
             server.stdin.close()
             try:
